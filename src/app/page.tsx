@@ -5,19 +5,30 @@
  * 
  * Clarion AI - Lab Report Explainer
  * 
- * Redesigned UI/UX with:
- * - Hero section with clear value proposition
- * - Drag-and-drop file upload support
- * - Visual pipeline indicator showing AI workflow
- * - Step-by-step loading states
- * - Try Sample Report button for demo
- * - Medical trust signals (privacy, disclaimer)
- * - Modern healthcare-themed styling
- * - Fully responsive and accessible
+ * Fully refactored with:
+ * - Component-based architecture for maintainability
+ * - Comprehensive accessibility (ARIA, focus states, keyboard navigation)
+ * - Cancel operation support via AbortController
+ * - Export/print functionality
+ * - Search and filter for test results
+ * - Visual indicators for abnormal values
+ * - Client-side file validation
+ * - Mobile-responsive design
+ * - Error retry mechanism
+ * - Reusable design system
  */
 
-import { useState, useRef, ChangeEvent, DragEvent } from "react";
+import { useState, useRef, useMemo } from "react";
 import type { LabExplanation } from "@/lib/gemini";
+import { PipelineIndicator } from "@/components/PipelineIndicator";
+import { LoadingProgress } from "@/components/LoadingProgress";
+import { UploadCard } from "@/components/UploadCard";
+import { ErrorDisplay } from "@/components/ErrorDisplay";
+import { Button } from "@/components/Button";
+import { TestResultCard } from "@/components/TestResultCard";
+import { SearchFilter } from "@/components/SearchFilter";
+import { ExportActions } from "@/components/ExportActions";
+import { colors, gradients, borderRadius, spacing, shadows } from "@/lib/theme";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -41,203 +52,41 @@ interface ExplainResponse {
 }
 
 type Stage = "idle" | "extracting" | "explaining" | "done" | "error";
+type TestStatus = 'normal' | 'high' | 'low' | 'critical';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-const badge = (label: string, color: string) => (
-  <span
-    style={{
-      background: color,
-      color: "#fff",
-      borderRadius: 4,
-      padding: "2px 8px",
-      fontSize: 11,
-      fontWeight: 700,
-      marginRight: 6,
-    }}
-  >
-    {label}
-  </span>
-);
-
 const OCR_ENABLED = true;
 
-// ── Subcomponents ────────────────────────────────────────────────────────────
-
-// Visual pipeline indicator showing the AI workflow
-function PipelineIndicator({ currentStage }: { currentStage: Stage }) {
-  const steps = [
-    { id: "upload", label: "Upload PDF", icon: "📄", stage: "idle" },
-    { id: "extract", label: "OCR / Extract", icon: "🔍", stage: "extracting" },
-    { id: "analyze", label: "AI Analysis", icon: "🧠", stage: "explaining" },
-    { id: "results", label: "Explanation", icon: "✨", stage: "done" },
-  ];
-
-  const getStepStatus = (stepStage: string) => {
-    if (currentStage === stepStage) return "active";
-    const stageOrder = ["idle", "extracting", "explaining", "done"];
-    const currentIndex = stageOrder.indexOf(currentStage);
-    const stepIndex = stageOrder.indexOf(stepStage);
-    return stepIndex < currentIndex ? "completed" : "pending";
-  };
-
-  return (
-    <div style={{ 
-      display: "flex", 
-      justifyContent: "center", 
-      alignItems: "center", 
-      gap: "8px",
-      padding: "24px 0",
-      flexWrap: "wrap"
-    }}>
-      {steps.map((step, idx) => {
-        const status = getStepStatus(step.stage);
-        return (
-          <div key={step.id} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <div style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "4px"
-            }}>
-              <div style={{
-                width: 48,
-                height: 48,
-                borderRadius: "50%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 20,
-                background: status === "active" ? "#3182ce" : 
-                           status === "completed" ? "#48bb78" : "#e2e8f0",
-                color: status === "pending" ? "#718096" : "#fff",
-                border: status === "active" ? "3px solid #63b3ed" : "none",
-                transition: "all 0.3s ease",
-                boxShadow: status === "active" ? "0 0 0 4px rgba(49,130,206,0.1)" : "none"
-              }}>
-                {step.icon}
-              </div>
-              <span style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: status === "active" ? "#3182ce" : 
-                       status === "completed" ? "#48bb78" : "#a0aec0",
-                textAlign: "center",
-                maxWidth: 70
-              }}>
-                {step.label}
-              </span>
-            </div>
-            {idx < steps.length - 1 && (
-              <div style={{
-                width: 24,
-                height: 2,
-                background: status === "completed" ? "#48bb78" : "#e2e8f0",
-                marginTop: -16,
-                transition: "all 0.3s ease"
-              }} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// Step-by-step loading progress indicator
-function LoadingProgress({ 
-  stage, 
-  statusMsg, 
-  ocrProgress 
-}: { 
-  stage: Stage;
-  statusMsg?: string;
-  ocrProgress?: { current: number; total: number } | null;
-}) {
-  const messages = {
-    extracting: { text: "Extracting text from PDF...", desc: "Reading document with OCR technology" },
-    explaining: { text: "Analyzing lab values...", desc: "Normalizing test names and querying medical knowledge base" }
-  };
-
-  const msg = messages[stage as keyof typeof messages];
-  if (!msg) return null;
-
-  return (
-    <div style={{
-      background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-      borderRadius: 16,
-      padding: 24,
-      color: "#fff",
-      textAlign: "center",
-      marginBottom: 24,
-      boxShadow: "0 8px 24px rgba(102,126,234,0.2)"
-    }}>
-      <div style={{ 
-        display: "inline-block",
-        animation: "spin 1s linear infinite",
-        fontSize: 32,
-        marginBottom: 12
-      }}>
-        ⚡
-      </div>
-      <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 6 }}>
-        {statusMsg || msg.text}
-      </div>
-      
-      {/* OCR Progress Bar */}
-      {ocrProgress && (
-        <div style={{ marginTop: 16, marginBottom: 8 }}>
-          <div style={{ 
-            fontSize: 14, 
-            opacity: 0.95, 
-            marginBottom: 8,
-            fontWeight: 600
-          }}>
-            Page {ocrProgress.current} of {ocrProgress.total}
-          </div>
-          <div style={{
-            width: "100%",
-            height: 8,
-            background: "rgba(255,255,255,0.2)",
-            borderRadius: 4,
-            overflow: "hidden"
-          }}>
-            <div style={{
-              width: `${(ocrProgress.current / ocrProgress.total) * 100}%`,
-              height: "100%",
-              background: "#fff",
-              borderRadius: 4,
-              transition: "width 0.3s ease"
-            }} />
-          </div>
-          <div style={{ 
-            fontSize: 12, 
-            opacity: 0.85, 
-            marginTop: 6 
-          }}>
-            {Math.round((ocrProgress.current / ocrProgress.total) * 100)}% complete
-          </div>
-        </div>
-      )}
-      
-      {!ocrProgress && (
-        <div style={{ fontSize: 13, opacity: 0.9 }}>
-          {msg.desc}
-        </div>
-      )}
-      <style jsx>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
-    </div>
-  );
+/**
+ * Determine test status based on value and range
+ * This is a simplified heuristic - real implementation would need medical knowledge
+ */
+function determineTestStatus(value: string, range?: string): TestStatus {
+  if (!range) return 'normal';
+  
+  // Extract numeric value
+  const numValue = parseFloat(value.replace(/[^0-9.-]/g, ''));
+  if (isNaN(numValue)) return 'normal';
+  
+  // Try to parse range (e.g., "4.5-11.0" or "< 10")
+  const rangeMatch = range.match(/(\d+\.?\d*)\s*-\s*(\d+\.?\d*)/);
+  if (rangeMatch) {
+    const min = parseFloat(rangeMatch[1]);
+    const max = parseFloat(rangeMatch[2]);
+    
+    if (numValue < min * 0.5 || numValue > max * 2) return 'critical';
+    if (numValue < min) return 'low';
+    if (numValue > max) return 'high';
+  }
+  
+  return 'normal';
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function HomePage() {
+  // State management
   const [stage, setStage] = useState<Stage>("idle");
   const [statusMsg, setStatusMsg] = useState("");
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -249,9 +98,15 @@ export default function HomePage() {
   const [lastFile, setLastFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [ocrProgress, setOcrProgress] = useState<{ current: number; total: number } | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  
+  // Search and filter states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterStatus, setFilterStatus] = useState<'all' | 'abnormal' | 'normal'>('all');
+  
+  // Abort controller for cancellation
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  // ── Event Handlers ────────────────────────────────────────────────────────
+  // ── Core Processing Functions ─────────────────────────────────────────────────
 
   async function runExplain(text: string, source: "pdf" | "ocr") {
     setExtractedText(text);
@@ -260,30 +115,51 @@ export default function HomePage() {
       `✅ Extracted ${text.length} chars via ${source.toUpperCase()}. Running knowledge graph lookup…`
     );
 
-    // ── Step 2: Normalize + explain via Neo4j + Gemini ───────────────────────
     setStage("explaining");
 
-    const explainRes = await fetch("/api/explain", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ extractedText: text }),
-    });
-    const explainData: ExplainResponse = await explainRes.json();
+    try {
+      // Create new abort controller for this request
+      abortControllerRef.current = new AbortController();
+      
+      const explainRes = await fetch("/api/explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ extractedText: text }),
+        signal: abortControllerRef.current.signal,
+      });
+      
+      const explainData: ExplainResponse = await explainRes.json();
 
-    if (!explainData.ok || !explainData.output) {
-      setStage("error");
-      setStatusMsg(`❌ Explanation failed: ${explainData.error}`);
+      if (!explainData.ok || !explainData.output) {
+        setStage("error");
+        setErrorCode(null);
+        setErrorMessage(explainData.error || "Explanation failed");
+        setStatusMsg(`❌ Explanation failed: ${explainData.error}`);
+        setDebug(explainData.debug ?? null);
+        return;
+      }
+
+      setResult(explainData.output);
       setDebug(explainData.debug ?? null);
-      return;
+      setStage("done");
+      setStatusMsg("");
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        setStage("idle");
+        setStatusMsg("Operation cancelled by user");
+        return;
+      }
+      setStage("error");
+      setErrorCode(null);
+      setErrorMessage(error.message || "Unknown error");
+      setStatusMsg(`❌ Error: ${error.message}`);
+    } finally {
+      abortControllerRef.current = null;
     }
-
-    setResult(explainData.output);
-    setDebug(explainData.debug ?? null);
-    setStage("done");
-    setStatusMsg("");
   }
 
   async function processFile(file: File) {
+    // Reset state
     setResult(null);
     setDebug(null);
     setExtractedText("");
@@ -292,8 +168,9 @@ export default function HomePage() {
     setErrorMessage("");
     setOcrProgress(null);
     setLastFile(file);
+    setSearchQuery("");
+    setFilterStatus('all');
 
-    // ── Step 1: Extract text from PDF (with streaming progress) ──────────────
     setStage("extracting");
     setStatusMsg(`📄 Extracting text from "${file.name}"…`);
 
@@ -301,10 +178,13 @@ export default function HomePage() {
     form.append("file", file);
 
     try {
-      // Use streaming endpoint to get live progress
+      // Create new abort controller
+      abortControllerRef.current = new AbortController();
+      
       const extractRes = await fetch("/api/extract?stream=true", { 
         method: "POST", 
-        body: form 
+        body: form,
+        signal: abortControllerRef.current.signal,
       });
 
       if (!extractRes.ok || !extractRes.body) {
@@ -352,24 +232,21 @@ export default function HomePage() {
       }
 
       await runExplain(extractedTextResult, extractSourceResult);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        setStage("idle");
+        setStatusMsg("Operation cancelled by user");
+        setOcrProgress(null);
+        return;
+      }
       setStage("error");
-      const message = error instanceof Error ? error.message : "Unknown error";
       setErrorCode("EXTRACTION_FAILED");
-      setErrorMessage(message);
-      setStatusMsg(`❌ Extraction failed: ${message}`);
+      setErrorMessage(error.message || "Unknown error");
+      setStatusMsg(`❌ Extraction failed: ${error.message}`);
       setOcrProgress(null);
+    } finally {
+      abortControllerRef.current = null;
     }
-  }
-
-  async function handleFile(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.includes("pdf")) {
-      alert("Please upload a PDF file only.");
-      return;
-    }
-    await processFile(file);
   }
 
   async function handleOcr() {
@@ -388,72 +265,67 @@ export default function HomePage() {
     const form = new FormData();
     form.append("file", lastFile);
 
-    const ocrRes = await fetch("/api/ocr", { method: "POST", body: form });
-    const ocrData: ExtractResponse = await ocrRes.json();
-
-    if (!ocrData.ok || !ocrData.extractedText) {
-      setStage("error");
-      setErrorCode(ocrData.error ?? null);
-      setErrorMessage(ocrData.message ?? ocrData.error ?? "OCR failed.");
-      setStatusMsg(`❌ OCR failed: ${ocrData.message ?? ocrData.error}`);
-      return;
-    }
-
-    await runExplain(ocrData.extractedText, "ocr");
-  }
-
-  // ── Drag & Drop Handlers ──────────────────────────────────────────────────
-
-  function handleDragEnter(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  }
-
-  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  }
-
-  function handleDragOver(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-  }
-
-  async function handleDrop(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
-    const files = e.dataTransfer.files;
-    if (!files || files.length === 0) return;
-
-    const file = files[0];
-    if (!file.type.includes("pdf")) {
-      alert("Please upload a PDF file only.");
-      return;
-    }
-
-    await processFile(file);
-  }
-
-  // ── Try Sample Report ─────────────────────────────────────────────────────
-
-  async function handleTrySample() {
     try {
-      // Fetch the sample PDF from the public folder
-      const response = await fetch("/sample_cbc_report_1.pdf");
-      if (!response.ok) {
-        alert("Sample report not found. Please ensure sample_cbc_report_1.pdf is in the public folder.");
+      abortControllerRef.current = new AbortController();
+      
+      const ocrRes = await fetch("/api/ocr", { 
+        method: "POST", 
+        body: form,
+        signal: abortControllerRef.current.signal,
+      });
+      
+      const ocrData: ExtractResponse = await ocrRes.json();
+
+      if (!ocrData.ok || !ocrData.extractedText) {
+        setStage("error");
+        setErrorCode(ocrData.error ?? null);
+        setErrorMessage(ocrData.message ?? ocrData.error ?? "OCR failed.");
+        setStatusMsg(`❌ OCR failed: ${ocrData.message ?? ocrData.error}`);
         return;
       }
 
-      // Convert to Blob, then to File object
-      const blob = await response.blob();
-      const file = new File([blob], "sample_cbc_report_1.pdf", { type: "application/pdf" });
+      await runExplain(ocrData.extractedText, "ocr");
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        setStage("idle");
+        setStatusMsg("Operation cancelled by user");
+        return;
+      }
+      setStage("error");
+      setErrorCode(null);
+      setErrorMessage(error.message || "OCR failed");
+      setStatusMsg(`❌ OCR Error: ${error.message}`);
+    } finally {
+      abortControllerRef.current = null;
+    }
+  }
 
-      // Process using the existing pipeline
+  function handleCancel() {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setStatusMsg("Cancelling operation...");
+    }
+  }
+
+  function handleRetry() {
+    setStage("idle");
+    setErrorCode(null);
+    setErrorMessage("");
+    setStatusMsg("");
+    setResult(null);
+    setDebug(null);
+  }
+
+  async function handleTrySample() {
+    try {
+      const response = await fetch("/sample_cbc_report.pdf");
+      if (!response.ok) {
+        alert("Sample report not found. Please ensure sample_cbc_report.pdf is in the public folder.");
+        return;
+      }
+
+      const blob = await response.blob();
+      const file = new File([blob], "sample_cbc_report.pdf", { type: "application/pdf" });
       await processFile(file);
     } catch (error) {
       console.error("Error loading sample report:", error);
@@ -461,26 +333,55 @@ export default function HomePage() {
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Search and Filter Logic ──────────────────────────────────────────────────
+
+  const filteredResults = useMemo(() => {
+    if (!result?.results_table) return [];
+    
+    return result.results_table.filter(test => {
+      // Apply search filter
+      if (searchQuery && !test.test.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return false;
+      }
+      
+      // Apply status filter
+      if (filterStatus !== 'all') {
+        const status = determineTestStatus(test.value, test.range);
+        if (filterStatus === 'abnormal' && status === 'normal') return false;
+        if (filterStatus === 'normal' && status !== 'normal') return false;
+      }
+      
+      return true;
+    });
+  }, [result, searchQuery, filterStatus]);
+
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div style={{ 
       minHeight: "100vh",
-      background: "linear-gradient(to bottom, #f7fafc 0%, #edf2f7 100%)"
+      background: gradients.background
     }}>
+      {/* Skip to main content for accessibility */}
+      <a href="#main-content" className="skip-to-main">
+        Skip to main content
+      </a>
+
       {/* Hero Section */}
-      <div style={{
-        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-        color: "#fff",
-        padding: "64px 24px",
+      <header style={{
+        background: gradients.primary,
+        color: colors.white,
+        padding: "clamp(32px, 8vw, 64px) 24px",
         textAlign: "center",
-        marginBottom: 48
-      }}>
+        marginBottom: spacing['3xl']
+      }}
+      role="banner"
+      >
         <div style={{ maxWidth: 900, margin: "0 auto" }}>
           <h1 style={{ 
             fontSize: "clamp(32px, 5vw, 48px)", 
             fontWeight: 900, 
-            marginBottom: 16,
+            marginBottom: spacing.lg,
             lineHeight: 1.2
           }}>
             🩺 Clarion AI
@@ -488,7 +389,7 @@ export default function HomePage() {
           <h2 style={{ 
             fontSize: "clamp(20px, 3vw, 28px)", 
             fontWeight: 600, 
-            marginBottom: 20,
+            marginBottom: spacing.lg,
             opacity: 0.95
           }}>
             Lab Report Explainer
@@ -496,10 +397,10 @@ export default function HomePage() {
           <p style={{ 
             fontSize: "clamp(15px, 2vw, 18px)", 
             lineHeight: 1.7, 
-            marginBottom: 12,
+            marginBottom: spacing.md,
             opacity: 0.9,
             maxWidth: 700,
-            margin: "0 auto 12px"
+            margin: `0 auto ${spacing.md}`
           }}>
             Get patient-friendly explanations of your CBC lab results in seconds.
             Upload a PDF, and our AI pipeline handles the rest.
@@ -517,19 +418,21 @@ export default function HomePage() {
         <div style={{
           display: "flex",
           justifyContent: "center",
-          gap: 32,
-          marginTop: 32,
+          gap: spacing['2xl'],
+          marginTop: spacing['2xl'],
           flexWrap: "wrap",
           fontSize: 13,
           opacity: 0.85
-        }}>
-          <div>🔒 <strong>Private</strong> - No data stored</div>
-          <div>⚡ <strong>Fast</strong> - Results in seconds</div>
-          <div>🎯 <strong>Accurate</strong> - AI-powered analysis</div>
+        }}
+        role="list"
+        >
+          <div role="listitem">🔒 <strong>Private</strong> - No data stored</div>
+          <div role="listitem">⚡ <strong>Fast</strong> - Results in seconds</div>
+          <div role="listitem">🎯 <strong>Accurate</strong> - AI-powered analysis</div>
         </div>
-      </div>
+      </header>
 
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 24px 48px" }}>
+      <main id="main-content" style={{ maxWidth: 900, margin: "0 auto", padding: `0 24px ${spacing['3xl']}` }}>
         
         {/* Pipeline Indicator */}
         {stage !== "idle" && <PipelineIndicator currentStage={stage} />}
@@ -540,313 +443,155 @@ export default function HomePage() {
             stage={stage} 
             statusMsg={statusMsg}
             ocrProgress={ocrProgress}
+            onCancel={handleCancel}
           />
         )}
 
         {/* Upload Card (only show when idle or error) */}
         {(stage === "idle" || stage === "error") && (
-          <div
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-            onClick={() => fileRef.current?.click()}
-            role="button"
-            tabIndex={0}
-            aria-label="Upload PDF lab report"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                fileRef.current?.click();
-              }
-            }}
-            style={{
-              background: isDragging ? "#ebf8ff" : "#fff",
-              border: isDragging ? "3px dashed #3182ce" : "3px dashed #cbd5e0",
-              borderRadius: 16,
-              padding: "48px 32px",
-              textAlign: "center",
-              marginBottom: 24,
-              cursor: "pointer",
-              transition: "all 0.3s ease",
-              boxShadow: isDragging ? "0 12px 36px rgba(49,130,206,0.15)" : "0 4px 12px rgba(0,0,0,0.05)",
-              transform: isDragging ? "scale(1.02)" : "scale(1)",
-            }}
-          >
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/pdf"
-              style={{ display: "none" }}
-              onChange={handleFile}
-              aria-label="Select PDF file"
+          <>
+            <UploadCard
+              onFileSelect={processFile}
+              isDragging={isDragging}
+              onDragStateChange={setIsDragging}
+              maxSizeMB={10}
             />
-            
-            <div style={{ fontSize: 64, marginBottom: 16 }}>
-              {isDragging ? "⬇️" : "📄"}
-            </div>
-            
-            <h3 style={{ 
-              fontSize: 22, 
-              fontWeight: 700, 
-              marginBottom: 8,
-              color: "#2d3748"
-            }}>
-              {isDragging ? "Drop your PDF here" : "Upload your CBC Lab Report"}
-            </h3>
-            
-            <p style={{ 
-              fontSize: 15, 
-              color: "#718096", 
-              marginBottom: 20,
-              lineHeight: 1.6
-            }}>
-              Drag and drop your PDF file here, or click to browse
-            </p>
 
-            <div style={{
-              display: "inline-block",
-              background: "#667eea",
-              color: "#fff",
-              padding: "12px 28px",
-              borderRadius: 8,
-              fontWeight: 700,
-              fontSize: 15,
-              marginBottom: 16,
-              boxShadow: "0 4px 12px rgba(102,126,234,0.3)",
-              transition: "all 0.2s"
-            }}>
-              Select PDF File
-            </div>
-
-            <div style={{ 
-              fontSize: 12, 
-              color: "#a0aec0",
-              marginTop: 16
-            }}>
-              Accepted format: <strong>PDF only</strong> • Max size: 10MB
-            </div>
-
-            {/* Microcopy */}
-            <div style={{
-              marginTop: 24,
-              padding: 16,
-              background: "#f7fafc",
-              borderRadius: 8,
-              display: "flex",
-              justifyContent: "center",
-              gap: 24,
-              flexWrap: "wrap",
-              fontSize: 12,
-              color: "#4a5568"
-            }}>
-              <div>✓ Secure upload</div>
-              <div>✓ Private analysis</div>
-              <div>✓ Fast AI processing</div>
-            </div>
-          </div>
-        )}
-
-        {/* Try Sample Button */}
-        {stage === "idle" && (
-          <div style={{ textAlign: "center", marginBottom: 32 }}>
-            <button
-              onClick={handleTrySample}
-              style={{
-                background: "#fff",
-                border: "2px solid #e2e8f0",
-                borderRadius: 8,
-                padding: "10px 20px",
-                fontSize: 14,
-                fontWeight: 600,
-                color: "#4a5568",
-                cursor: "pointer",
-                transition: "all 0.2s",
-                boxShadow: "0 2px 4px rgba(0,0,0,0.05)"
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = "#cbd5e0";
-                e.currentTarget.style.boxShadow = "0 4px 8px rgba(0,0,0,0.1)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = "#e2e8f0";
-                e.currentTarget.style.boxShadow = "0 2px 4px rgba(0,0,0,0.05)";
-              }}
-            >
-              📋 Try a Sample Report
-            </button>
-          </div>
+            {/* Try Sample Button */}
+            {stage === "idle" && (
+              <div style={{ textAlign: "center", marginBottom: spacing['2xl'] }}>
+                <button
+                  onClick={handleTrySample}
+                  style={{
+                    background: colors.white,
+                    border: `2px solid ${colors.primary[200]}`,
+                    borderRadius: borderRadius.md,
+                    padding: `10px 20px`,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: colors.primary[600],
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                    boxShadow: shadows.sm
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = colors.primary[300];
+                    e.currentTarget.style.boxShadow = shadows.md;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = colors.primary[200];
+                    e.currentTarget.style.boxShadow = shadows.sm;
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.outline = `3px solid ${colors.info[300]}`;
+                    e.currentTarget.style.outlineOffset = '2px';
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.outline = 'none';
+                  }}
+                  aria-label="Try a sample CBC lab report"
+                >
+                  📋 Try a Sample Report
+                </button>
+              </div>
+            )}
+          </>
         )}
 
         {/* Error State */}
         {stage === "error" && (
-          <div
-            style={{
-              background: "#fff5f5",
-              border: "2px solid #fc8181",
-              borderRadius: 12,
-              padding: 24,
-              marginBottom: 24,
-            }}
-          >
-            {errorCode === "SCANNED_PDF" ? (
-              <div>
-                <div style={{ 
-                  fontSize: 18,
-                  fontWeight: 700, 
-                  marginBottom: 12,
-                  color: "#c53030"
-                }}>
-                  🧾 Scanned PDF Detected
-                </div>
-                <div style={{ color: "#742a2a", marginBottom: 16, lineHeight: 1.6 }}>
-                  {errorMessage ||
-                    "This appears to be a scanned/image-based PDF. We'll need to use OCR to extract the text."}
-                </div>
-                {OCR_ENABLED && (
-                  <button
-                    onClick={handleOcr}
-                    style={{
-                      background: "#c53030",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: 8,
-                      padding: "12px 24px",
-                      fontWeight: 700,
-                      fontSize: 15,
-                      cursor: "pointer",
-                      boxShadow: "0 4px 12px rgba(197,48,48,0.3)",
-                      transition: "all 0.2s"
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "#9b2c2c";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "#c53030";
-                    }}
-                  >
-                    🔍 Run OCR Analysis
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div>
-                <div style={{ 
-                  fontSize: 18,
-                  fontWeight: 700, 
-                  marginBottom: 12,
-                  color: "#c53030"
-                }}>
-                  ❌ Processing Error
-                </div>
-                <div style={{ color: "#742a2a", lineHeight: 1.6 }}>
-                  {statusMsg || errorMessage || "An error occurred during processing."}
-                </div>
-              </div>
-            )}
-            {debug && (
-              <details style={{ marginTop: 16, fontSize: 12 }}>
-                <summary style={{ cursor: "pointer", fontWeight: 600, color: "#742a2a" }}>
-                  View debug info
-                </summary>
-                <pre style={{ 
-                  marginTop: 8, 
-                  padding: 12,
-                  background: "#fef5f5",
-                  borderRadius: 6,
-                  overflow: "auto",
-                  fontSize: 11
-                }}>
-                  {JSON.stringify(debug, null, 2)}
-                </pre>
-              </details>
-            )}
-          </div>
+          <ErrorDisplay
+            errorCode={errorCode}
+            errorMessage={errorMessage}
+            statusMsg={statusMsg}
+            onRetry={handleRetry}
+            onOcr={OCR_ENABLED && errorCode === "SCANNED_PDF" ? handleOcr : undefined}
+            debug={debug}
+            ocrEnabled={OCR_ENABLED}
+          />
         )}
 
         {/* Success Badge */}
         {stage === "done" && extractSource && (
           <div style={{
-            background: "#f0fff4",
-            border: "2px solid #9ae6b4",
-            borderRadius: 12,
-            padding: 16,
-            marginBottom: 24,
+            background: colors.success[50],
+            border: `2px solid ${colors.success[200]}`,
+            borderRadius: borderRadius.lg,
+            padding: spacing.lg,
+            marginBottom: spacing.xl,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             flexWrap: "wrap",
-            gap: 12
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ fontSize: 24 }}>✅</div>
+            gap: spacing.md
+          }}
+          role="status"
+          aria-live="polite"
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: spacing.md }}>
+              <div style={{ fontSize: 24 }} aria-hidden="true">✅</div>
               <div>
-                <div style={{ fontWeight: 700, color: "#276749", marginBottom: 2 }}>
+                <div style={{ fontWeight: 700, color: colors.success[700], marginBottom: 2 }}>
                   Analysis Complete
                 </div>
-                <div style={{ fontSize: 13, color: "#22543d" }}>
+                <div style={{ fontSize: 13, color: colors.success[800] }}>
                   Extracted via {extractSource === "ocr" ? "OCR" : "PDF Parser"} • {extractedText.length} characters processed
                 </div>
               </div>
             </div>
-            <button
+            <Button
+              variant="success"
               onClick={() => {
                 setStage("idle");
                 setResult(null);
                 setExtractedText("");
                 setExtractSource(null);
                 setDebug(null);
-              }}
-              style={{
-                background: "#48bb78",
-                color: "#fff",
-                border: "none",
-                borderRadius: 8,
-                padding: "8px 16px",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: "pointer",
-                transition: "all 0.2s"
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "#38a169";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "#48bb78";
+                setSearchQuery("");
+                setFilterStatus('all');
               }}
             >
               Analyze Another Report
-            </button>
+            </Button>
           </div>
+        )}
+
+        {/* Export Actions */}
+        {result && extractedText && (
+          <ExportActions result={result} extractedText={extractedText} />
         )}
 
         {/* Debug panel */}
         {debug && stage === "done" && (
           <details
             style={{
-              background: "#fff",
-              border: "2px solid #e2e8f0",
-              borderRadius: 12,
-              padding: 16,
-              marginBottom: 24,
+              background: colors.white,
+              border: `2px solid ${colors.primary[200]}`,
+              borderRadius: borderRadius.lg,
+              padding: spacing.lg,
+              marginBottom: spacing.xl,
             }}
           >
             <summary style={{ 
               cursor: "pointer", 
               fontWeight: 700, 
               fontSize: 14,
-              color: "#2d3748",
+              color: colors.primary[700],
               display: "flex",
               alignItems: "center",
-              gap: 8
-            }}>
-              <span>🔍</span>
+              gap: spacing.sm,
+              padding: spacing.sm,
+              borderRadius: borderRadius.sm,
+            }}
+            tabIndex={0}
+            >
+              <span aria-hidden="true">🔍</span>
               <span>
                 Neo4j Normalization Details ({debug.candidatesFound} candidates → {debug.testsNormalized} matched)
               </span>
             </summary>
             <div style={{ 
-              marginTop: 16,
+              marginTop: spacing.lg,
               overflowX: "auto"
             }}>
               <table
@@ -858,14 +603,14 @@ export default function HomePage() {
                 }}
               >
                 <thead>
-                  <tr style={{ background: "#f7fafc", borderBottom: "2px solid #e2e8f0" }}>
-                    <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700 }}>
+                  <tr style={{ background: colors.primary[50], borderBottom: `2px solid ${colors.primary[200]}` }}>
+                    <th style={{ padding: `${spacing.sm} ${spacing.md}`, textAlign: "left", fontWeight: 700 }}>
                       Raw name in PDF
                     </th>
-                    <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700 }}>
+                    <th style={{ padding: `${spacing.sm} ${spacing.md}`, textAlign: "left", fontWeight: 700 }}>
                       → Canonical Name
                     </th>
-                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700 }}>
+                    <th style={{ padding: `${spacing.sm} ${spacing.md}`, textAlign: "right", fontWeight: 700 }}>
                       Similarity Score
                     </th>
                   </tr>
@@ -875,19 +620,19 @@ export default function HomePage() {
                     <tr 
                       key={i} 
                       style={{ 
-                        borderBottom: "1px solid #e2e8f0",
-                        background: i % 2 === 0 ? "#fff" : "#fafafa"
+                        borderBottom: `1px solid ${colors.primary[200]}`,
+                        background: i % 2 === 0 ? colors.white : colors.gray[50]
                       }}
                     >
-                      <td style={{ padding: "8px 12px", color: "#718096" }}>{n.raw}</td>
-                      <td style={{ padding: "8px 12px", fontWeight: 600, color: "#2d3748" }}>
+                      <td style={{ padding: `${spacing.sm} ${spacing.md}`, color: colors.primary[500] }}>{n.raw}</td>
+                      <td style={{ padding: `${spacing.sm} ${spacing.md}`, fontWeight: 600, color: colors.primary[700] }}>
                         {n.canonical}
                       </td>
                       <td style={{ 
-                        padding: "8px 12px", 
+                        padding: `${spacing.sm} ${spacing.md}`, 
                         textAlign: "right",
                         fontFamily: "monospace",
-                        color: "#3182ce",
+                        color: colors.info[500],
                         fontWeight: 600
                       }}>
                         {n.score}
@@ -906,36 +651,39 @@ export default function HomePage() {
             {/* Patient Summary */}
             <section
               style={{
-                background: "#fff",
-                borderRadius: 16,
-                padding: 32,
-                marginBottom: 20,
-                boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
-                border: "1px solid #e2e8f0"
+                background: colors.white,
+                borderRadius: borderRadius.xl,
+                padding: spacing['2xl'],
+                marginBottom: spacing.lg,
+                boxShadow: shadows.lg,
+                border: `1px solid ${colors.primary[200]}`
               }}
+              aria-labelledby="patient-summary-heading"
             >
               <div style={{ 
                 display: "flex", 
                 alignItems: "center", 
-                gap: 12,
-                marginBottom: 16
+                gap: spacing.md,
+                marginBottom: spacing.lg
               }}>
                 <div style={{ 
                   fontSize: 28,
                   width: 48,
                   height: 48,
-                  borderRadius: "50%",
-                  background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                  borderRadius: borderRadius.full,
+                  background: gradients.primary,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center"
-                }}>
+                }}
+                aria-hidden="true"
+                >
                   📝
                 </div>
-                <h2 style={{ 
+                <h2 id="patient-summary-heading" style={{ 
                   fontSize: 22, 
                   fontWeight: 800,
-                  color: "#2d3748"
+                  color: colors.primary[700]
                 }}>
                   Patient Summary
                 </h2>
@@ -943,35 +691,36 @@ export default function HomePage() {
               <p style={{ 
                 lineHeight: 1.8, 
                 fontSize: 16,
-                color: "#4a5568" 
+                color: colors.primary[600]
               }}>
                 {result.patient_summary}
               </p>
             </section>
 
             {/* Key Findings */}
-            {result.key_findings?.length > 0 && (
+            {result.key_findings && result.key_findings.length > 0 && (
               <section
                 style={{
-                  background: "#fff",
-                  borderRadius: 16,
-                  padding: 32,
-                  marginBottom: 20,
-                  boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
-                  border: "1px solid #e2e8f0"
+                  background: colors.white,
+                  borderRadius: borderRadius.xl,
+                  padding: spacing['2xl'],
+                  marginBottom: spacing.lg,
+                  boxShadow: shadows.lg,
+                  border: `1px solid ${colors.primary[200]}`
                 }}
+                aria-labelledby="key-findings-heading"
               >
                 <div style={{ 
                   display: "flex", 
                   alignItems: "center", 
-                  gap: 12,
-                  marginBottom: 16
+                  gap: spacing.md,
+                  marginBottom: spacing.lg
                 }}>
-                  <div style={{ fontSize: 28 }}>🔑</div>
-                  <h2 style={{ 
+                  <div style={{ fontSize: 28 }} aria-hidden="true">🔑</div>
+                  <h2 id="key-findings-heading" style={{ 
                     fontSize: 22, 
                     fontWeight: 800,
-                    color: "#2d3748"
+                    color: colors.primary[700]
                   }}>
                     Key Findings
                   </h2>
@@ -987,7 +736,7 @@ export default function HomePage() {
                         marginBottom: 10, 
                         lineHeight: 1.7,
                         fontSize: 15,
-                        color: "#4a5568"
+                        color: colors.primary[600]
                       }}
                     >
                       {f}
@@ -998,48 +747,52 @@ export default function HomePage() {
             )}
 
             {/* Red Flags */}
-            {result.red_flags?.length > 0 && (
+            {result.red_flags && result.red_flags.length > 0 && (
               <section
                 style={{
-                  background: "linear-gradient(135deg, #fed7d7 0%, #feb2b2 100%)",
-                  border: "2px solid #fc8181",
-                  borderRadius: 16,
-                  padding: 32,
-                  marginBottom: 20,
-                  boxShadow: "0 4px 16px rgba(252,129,129,0.15)"
+                  background: gradients.error,
+                  border: `2px solid ${colors.error[500]}`,
+                  borderRadius: borderRadius.xl,
+                  padding: spacing['2xl'],
+                  marginBottom: spacing.lg,
+                  boxShadow: '0 4px 16px rgba(252,129,129,0.15)'
                 }}
+                aria-labelledby="red-flags-heading"
+                role="alert"
               >
                 <div style={{ 
                   display: "flex", 
                   alignItems: "center", 
-                  gap: 12,
-                  marginBottom: 16
+                  gap: spacing.md,
+                  marginBottom: spacing.lg
                 }}>
                   <div style={{ 
                     fontSize: 28,
                     width: 48,
                     height: 48,
-                    borderRadius: "50%",
-                    background: "#c53030",
-                    color: "#fff",
+                    borderRadius: borderRadius.full,
+                    background: colors.error[700],
+                    color: colors.white,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center"
-                  }}>
+                  }}
+                  aria-hidden="true"
+                  >
                     🚨
                   </div>
-                  <h2 style={{ 
+                  <h2 id="red-flags-heading" style={{ 
                     fontSize: 22, 
                     fontWeight: 800, 
-                    color: "#742a2a"
+                    color: colors.error[900]
                   }}>
                     Red Flags
                   </h2>
                 </div>
                 <div style={{
-                  background: "#fff",
-                  borderRadius: 12,
-                  padding: 20
+                  background: colors.white,
+                  borderRadius: borderRadius.lg,
+                  padding: spacing.lg
                 }}>
                   <ul style={{ 
                     paddingLeft: 24,
@@ -1050,7 +803,7 @@ export default function HomePage() {
                         key={i} 
                         style={{ 
                           marginBottom: 10, 
-                          color: "#742a2a",
+                          color: colors.error[900],
                           lineHeight: 1.7,
                           fontSize: 15,
                           fontWeight: 500
@@ -1065,182 +818,119 @@ export default function HomePage() {
             )}
 
             {/* Test-by-Test Breakdown */}
-            {result.results_table?.length > 0 && (
+            {result.results_table && result.results_table.length > 0 && (
               <section
                 style={{
-                  background: "#fff",
-                  borderRadius: 16,
-                  padding: 32,
-                  marginBottom: 20,
-                  boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
-                  border: "1px solid #e2e8f0"
+                  background: colors.white,
+                  borderRadius: borderRadius.xl,
+                  padding: spacing['2xl'],
+                  marginBottom: spacing.lg,
+                  boxShadow: shadows.lg,
+                  border: `1px solid ${colors.primary[200]}`
                 }}
+                aria-labelledby="test-breakdown-heading"
               >
                 <div style={{ 
                   display: "flex", 
                   alignItems: "center", 
-                  gap: 12,
-                  marginBottom: 24
+                  gap: spacing.md,
+                  marginBottom: spacing.xl
                 }}>
-                  <div style={{ fontSize: 28 }}>📊</div>
-                  <h2 style={{ 
+                  <div style={{ fontSize: 28 }} aria-hidden="true">📊</div>
+                  <h2 id="test-breakdown-heading" style={{ 
                     fontSize: 22, 
                     fontWeight: 800,
-                    color: "#2d3748"
+                    color: colors.primary[700]
                   }}>
                     Test-by-Test Breakdown
                   </h2>
                 </div>
-                {result.results_table.map((row, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      border: "2px solid #e2e8f0",
-                      borderRadius: 12,
-                      padding: 20,
-                      marginBottom: 16,
-                      background: "#fafafa",
-                      transition: "all 0.2s"
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "#f7fafc";
-                      e.currentTarget.style.borderColor = "#cbd5e0";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "#fafafa";
-                      e.currentTarget.style.borderColor = "#e2e8f0";
-                    }}
+
+                {/* Search and Filter */}
+                <SearchFilter
+                  searchQuery={searchQuery}
+                  onSearchChange={setSearchQuery}
+                  filterStatus={filterStatus}
+                  onFilterChange={setFilterStatus}
+                  resultCount={filteredResults.length}
+                  totalCount={result.results_table.length}
+                />
+
+                {/* Test Results */}
+                {filteredResults.length > 0 ? (
+                  filteredResults.map((row, i) => (
+                    <TestResultCard
+                      key={i}
+                      test={row.test}
+                      value={row.value}
+                      range={row.range}
+                      meaningPlainEnglish={row.meaning_plain_english}
+                      whatCanAffectIt={row.what_can_affect_it}
+                      questionsForDoctor={row.questions_for_doctor}
+                      status={determineTestStatus(row.value, row.range)}
+                    />
+                  ))
+                ) : (
+                  <div style={{
+                    textAlign: 'center',
+                    padding: spacing['2xl'],
+                    color: colors.primary[500],
+                    fontSize: 15
+                  }}
+                  role="status"
                   >
-                    <div style={{ 
-                      display: "flex", 
-                      alignItems: "center", 
-                      marginBottom: 12,
-                      flexWrap: "wrap",
-                      gap: 8
-                    }}>
-                      <strong style={{ 
-                        fontSize: 17,
-                        color: "#2d3748"
-                      }}>
-                        {row.test}
-                      </strong>
-                      {badge(row.value, "#3182ce")}
-                      {row.range && (
-                        <span style={{ 
-                          fontSize: 13, 
-                          color: "#718096",
-                          background: "#fff",
-                          padding: "2px 8px",
-                          borderRadius: 4,
-                          border: "1px solid #e2e8f0"
-                        }}>
-                          ref: {row.range}
-                        </span>
-                      )}
-                    </div>
-                    <p style={{ 
-                      fontSize: 15, 
-                      lineHeight: 1.7, 
-                      marginBottom: 12,
-                      color: "#4a5568"
-                    }}>
-                      {row.meaning_plain_english}
-                    </p>
-                    {row.what_can_affect_it?.length > 0 && (
-                      <p style={{ 
-                        fontSize: 13, 
-                        color: "#718096",
-                        marginBottom: 12,
-                        padding: 12,
-                        background: "#fff",
-                        borderRadius: 8,
-                        border: "1px solid #e2e8f0"
-                      }}>
-                        <strong style={{ color: "#4a5568" }}>Can be affected by:</strong>{" "}
-                        {row.what_can_affect_it.join(" · ")}
-                      </p>
-                    )}
-                    {row.questions_for_doctor?.length > 0 && (
-                      <div style={{ 
-                        marginTop: 12,
-                        padding: 12,
-                        background: "#fff",
-                        borderRadius: 8,
-                        border: "1px solid #e2e8f0"
-                      }}>
-                        <p style={{ 
-                          fontSize: 13, 
-                          fontWeight: 700, 
-                          color: "#2d3748",
-                          marginBottom: 8
-                        }}>
-                          💬 Questions for your doctor:
-                        </p>
-                        <ul style={{ paddingLeft: 20, margin: 0 }}>
-                          {row.questions_for_doctor.map((q, j) => (
-                            <li
-                              key={j}
-                              style={{ 
-                                fontSize: 13, 
-                                color: "#4a5568", 
-                                marginBottom: 4,
-                                lineHeight: 1.6
-                              }}
-                            >
-                              {q}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                    No tests match your search or filter criteria.
                   </div>
-                ))}
+                )}
               </section>
             )}
 
             {/* Next Steps */}
-            {result.next_steps?.length > 0 && (
+            {result.next_steps && result.next_steps.length > 0 && (
               <section
                 style={{
-                  background: "linear-gradient(135deg, #c6f6d5 0%, #9ae6b4 100%)",
-                  border: "2px solid #48bb78",
-                  borderRadius: 16,
-                  padding: 32,
-                  marginBottom: 20,
-                  boxShadow: "0 4px 16px rgba(72,187,120,0.15)"
+                  background: gradients.success,
+                  border: `2px solid ${colors.success[500]}`,
+                  borderRadius: borderRadius.xl,
+                  padding: spacing['2xl'],
+                  marginBottom: spacing.lg,
+                  boxShadow: '0 4px 16px rgba(72,187,120,0.15)'
                 }}
+                aria-labelledby="next-steps-heading"
               >
                 <div style={{ 
                   display: "flex", 
                   alignItems: "center", 
-                  gap: 12,
-                  marginBottom: 16
+                  gap: spacing.md,
+                  marginBottom: spacing.lg
                 }}>
                   <div style={{ 
                     fontSize: 28,
                     width: 48,
                     height: 48,
-                    borderRadius: "50%",
-                    background: "#38a169",
-                    color: "#fff",
+                    borderRadius: borderRadius.full,
+                    background: colors.success[600],
+                    color: colors.white,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center"
-                  }}>
+                  }}
+                  aria-hidden="true"
+                  >
                     ✅
                   </div>
-                  <h2 style={{ 
+                  <h2 id="next-steps-heading" style={{ 
                     fontSize: 22, 
                     fontWeight: 800, 
-                    color: "#22543d"
+                    color: colors.success[800]
                   }}>
                     Suggested Next Steps
                   </h2>
                 </div>
                 <div style={{
-                  background: "#fff",
-                  borderRadius: 12,
-                  padding: 20
+                  background: colors.white,
+                  borderRadius: borderRadius.lg,
+                  padding: spacing.lg
                 }}>
                   <ul style={{ 
                     paddingLeft: 24,
@@ -1251,7 +941,7 @@ export default function HomePage() {
                         key={i} 
                         style={{ 
                           marginBottom: 10, 
-                          color: "#22543d",
+                          color: colors.success[800],
                           lineHeight: 1.7,
                           fontSize: 15
                         }}
@@ -1267,23 +957,25 @@ export default function HomePage() {
             {/* Medical Disclaimer */}
             <div
               style={{
-                background: "#fff",
-                border: "2px solid #fbd38d",
-                borderRadius: 12,
-                padding: 20,
-                marginBottom: 20,
+                background: colors.white,
+                border: `2px solid ${colors.warning[100]}`,
+                borderRadius: borderRadius.lg,
+                padding: spacing.lg,
+                marginBottom: spacing.lg,
               }}
+              role="note"
+              aria-label="Medical disclaimer"
             >
               <div style={{
                 display: "flex",
                 alignItems: "flex-start",
-                gap: 12
+                gap: spacing.md
               }}>
-                <div style={{ fontSize: 24, flexShrink: 0 }}>⚠️</div>
+                <div style={{ fontSize: 24, flexShrink: 0 }} aria-hidden="true">⚠️</div>
                 <div>
                   <div style={{ 
                     fontWeight: 700, 
-                    color: "#744210",
+                    color: colors.warning[700],
                     marginBottom: 6,
                     fontSize: 14
                   }}>
@@ -1291,7 +983,7 @@ export default function HomePage() {
                   </div>
                   <p style={{
                     fontSize: 13,
-                    color: "#975a16",
+                    color: colors.warning[800],
                     lineHeight: 1.7,
                     margin: 0
                   }}>
@@ -1306,31 +998,35 @@ export default function HomePage() {
         {/* Extracted Text Accordion (Developer Tool) */}
         {extractedText && (
           <details style={{ 
-            marginTop: 24,
-            background: "#fff",
-            border: "1px solid #e2e8f0",
-            borderRadius: 12,
-            padding: 16
+            marginTop: spacing.xl,
+            background: colors.white,
+            border: `1px solid ${colors.primary[200]}`,
+            borderRadius: borderRadius.lg,
+            padding: spacing.lg
           }}>
             <summary style={{ 
               cursor: "pointer", 
               fontSize: 13, 
-              color: "#718096",
+              color: colors.primary[500],
               fontWeight: 600,
               display: "flex",
               alignItems: "center",
-              gap: 8
-            }}>
-              <span>📄</span>
+              gap: spacing.sm,
+              padding: spacing.sm,
+              borderRadius: borderRadius.sm,
+            }}
+            tabIndex={0}
+            >
+              <span aria-hidden="true">📄</span>
               <span>
                 Raw Extracted Text ({extractedText.length} chars)
                 {extractSource && (
                   <span style={{
-                    marginLeft: 8,
-                    background: extractSource === "ocr" ? "#9f7aea" : "#4299e1",
-                    color: "#fff",
+                    marginLeft: spacing.sm,
+                    background: extractSource === "ocr" ? colors.accent.light : colors.info[500],
+                    color: colors.white,
                     padding: "2px 8px",
-                    borderRadius: 4,
+                    borderRadius: borderRadius.sm,
                     fontSize: 10,
                     fontWeight: 700,
                     textTransform: "uppercase"
@@ -1342,19 +1038,19 @@ export default function HomePage() {
             </summary>
             <pre
               style={{
-                marginTop: 12,
+                marginTop: spacing.md,
                 fontSize: 12,
-                background: "#f7fafc",
-                padding: 16,
-                borderRadius: 8,
+                background: colors.primary[50],
+                padding: spacing.lg,
+                borderRadius: borderRadius.md,
                 overflowX: "auto",
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
                 maxHeight: 400,
                 overflowY: "auto",
-                border: "1px solid #e2e8f0",
+                border: `1px solid ${colors.primary[200]}`,
                 lineHeight: 1.6,
-                color: "#2d3748"
+                color: colors.primary[700]
               }}
             >
               {extractedText}
@@ -1364,51 +1060,56 @@ export default function HomePage() {
 
         {/* Privacy & Security Notice (Always Visible) */}
         <div style={{
-          marginTop: 48,
-          padding: 24,
-          background: "#fff",
-          borderRadius: 12,
-          border: "1px solid #e2e8f0",
+          marginTop: spacing['3xl'],
+          padding: spacing.xl,
+          background: colors.white,
+          borderRadius: borderRadius.lg,
+          border: `1px solid ${colors.primary[200]}`,
           textAlign: "center"
-        }}>
+        }}
+        role="complementary"
+        aria-label="Privacy information"
+        >
           <div style={{ 
             fontSize: 13, 
-            color: "#718096",
+            color: colors.primary[500],
             lineHeight: 1.8
           }}>
             <div style={{ 
               fontWeight: 700, 
-              color: "#2d3748",
-              marginBottom: 8,
+              color: colors.primary[700],
+              marginBottom: spacing.sm,
               fontSize: 14
             }}>
               🔒 Your Privacy Matters
             </div>
-            <p style={{ margin: "0 0 8px 0" }}>
+            <p style={{ margin: `0 0 ${spacing.sm} 0` }}>
               All analysis is performed in real-time. No lab data is stored permanently.
             </p>
-            <p style={{ margin: 0, fontSize: 12, color: "#a0aec0" }}>
+            <p style={{ margin: 0, fontSize: 12, color: colors.gray[400] }}>
               For educational purposes only • Not a substitute for professional medical advice
             </p>
           </div>
         </div>
 
         {/* Footer */}
-        <div style={{
-          marginTop: 32,
-          paddingTop: 24,
-          borderTop: "1px solid #e2e8f0",
+        <footer style={{
+          marginTop: spacing['2xl'],
+          paddingTop: spacing.xl,
+          borderTop: `1px solid ${colors.primary[200]}`,
           textAlign: "center",
           fontSize: 12,
-          color: "#a0aec0"
-        }}>
+          color: colors.gray[400]
+        }}
+        role="contentinfo"
+        >
           <p style={{ margin: 0 }}>
-            Powered by <strong style={{ color: "#667eea" }}>Gemini AI</strong> • 
-            {" "}<strong style={{ color: "#667eea" }}>Neo4j Knowledge Graph</strong> • 
-            {" "}<strong style={{ color: "#667eea" }}>Tesseract OCR</strong>
+            Powered by <strong style={{ color: colors.accent.primary }}>Gemini AI</strong> • 
+            {" "}<strong style={{ color: colors.accent.primary }}>Neo4j Knowledge Graph</strong> • 
+            {" "}<strong style={{ color: colors.accent.primary }}>Tesseract OCR</strong>
           </p>
-        </div>
-      </div>
+        </footer>
+      </main>
     </div>
   );
 }
