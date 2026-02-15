@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ 
           ok: false, 
           error: "Invalid patient context", 
-          details: validation.error.errors 
+          details: validation.error.issues 
         }, { status: 400 });
       }
       patientContext = validation.data;
@@ -136,13 +136,14 @@ export async function POST(req: NextRequest) {
     if (patientContext) {
       const parsedTests: ParsedTest[] = normalized.map((n) => ({
         canonical_name: n.test.name,
-        value: n.candidate.value,
+        value: parseFloat(n.candidate.value) || 0,
         unit: n.candidate.unit ?? n.test.unit ?? '',
         abnormal_flag: n.candidate.flag ?? null,
       }));
 
       clinicalSignals = await evaluateRules(parsedTests, patientContext);
-      patientSummary = summarizePatientContext(patientContext);
+      const summary = summarizePatientContext(patientContext);
+      patientSummary = `Patient: ${summary.age_group}, ${summary.sex_display}${summary.pregnancy_display ? `, ${summary.pregnancy_display}` : ''}. Symptoms: ${summary.symptoms_display.join(', ') || 'none reported'}.`;
       
       logger.info('Clinical reasoning executed', {
         findingsCount: clinicalSignals.findings.length,
