@@ -169,8 +169,8 @@ Clarion AI turns cryptic lab reports into understandable health insights:
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/your-username/lab-rag.git
-cd lab-rag
+git clone https://github.com/royalgillz/Clarion-AI.git
+cd Clarion-AI
 npm install
 ```
 
@@ -352,7 +352,7 @@ Generate patient-friendly explanation from extracted text.
 ## 📁 Project Structure
 
 ```
-lab-rag/
+Clarion-AI/
 ├── src/
 │   ├── app/
 │   │   ├── api/
