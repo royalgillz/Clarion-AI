@@ -5,7 +5,7 @@
 import React from 'react';
 import { colors, borderRadius, spacing } from '@/lib/theme';
 
-type Stage = "idle" | "extracting" | "explaining" | "done" | "error";
+type Stage = "idle" | "extracting" | "awaiting_patient_context" | "explaining" | "done" | "error";
 
 interface PipelineIndicatorProps {
   currentStage: Stage;
@@ -15,13 +15,14 @@ export function PipelineIndicator({ currentStage }: PipelineIndicatorProps) {
   const steps = [
     { id: "upload", label: "Upload PDF", icon: "📄", stage: "idle" },
     { id: "extract", label: "OCR / Extract", icon: "🔍", stage: "extracting" },
+    { id: "context", label: "Patient Info", icon: "📋", stage: "awaiting_patient_context" },
     { id: "analyze", label: "AI Analysis", icon: "🧠", stage: "explaining" },
     { id: "results", label: "Explanation", icon: "✨", stage: "done" },
   ];
 
   const getStepStatus = (stepStage: string) => {
     if (currentStage === stepStage) return "active";
-    const stageOrder = ["idle", "extracting", "explaining", "done"];
+    const stageOrder = ["idle", "extracting", "awaiting_patient_context", "explaining", "done"];
     const currentIndex = stageOrder.indexOf(currentStage);
     const stepIndex = stageOrder.indexOf(stepStage);
     return stepIndex < currentIndex ? "completed" : "pending";
