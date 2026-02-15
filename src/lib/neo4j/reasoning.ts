@@ -121,9 +121,9 @@ export async function evaluateRules(
       const matchResult = evaluateRule(rule, tests, patientContext, rulesResult.records);
       if (matchResult.matched) {
         rulesMatched++;
-        if (matchResult.finding && !matchedFindingIds.has(matchResult.finding.id)) {
+        if (matchResult.finding && !matchedFindingIds.has(matchResult.finding.finding_id)) {
           matchedFindings.push(matchResult.finding);
-          matchedFindingIds.add(matchResult.finding.id);
+          matchedFindingIds.add(matchResult.finding.finding_id);
         }
       }
     }
@@ -133,7 +133,7 @@ export async function evaluateRules(
     let urgentActions: Action[] = [];
 
     if (matchedFindings.length > 0) {
-      const findingIds = matchedFindings.map(f => f.id);
+      const findingIds = matchedFindings.map(f => f.finding_id);
       
       const conditionsResult = await session.run(
         `
@@ -224,7 +224,7 @@ function evaluateRule(
   }
 
   // Check if all required tests are present
-  const testsMap = new Map(tests.map(t => [t.test_canonical, t]));
+  const testsMap = new Map(tests.map(t => [t.canonical_name, t]));
   const hasAllRequiredTests = rule.required_tests.every((testId: any) => testsMap.has(testId));
   
   if (!hasAllRequiredTests) {
@@ -246,7 +246,7 @@ function evaluateRule(
     const met = evaluateThreshold(threshold, test);
     if (met) {
       thresholdsMet++;
-      whyParts.push(`${test.test_canonical} ${test.value_string} ${threshold.operator} threshold`);
+      whyParts.push(`${test.canonical_name} ${test.value} ${test.unit} ${threshold.operator} threshold`);
     }
   }
 
@@ -265,13 +265,10 @@ function evaluateRule(
   }
 
   const finding: MatchedFinding = {
-    id: findingData.id,
-    label: findingData.label,
-    severity: findingData.severity,
-    patient_friendly: findingData.patient_friendly,
-    why_matched: whyParts.join('; '),
-    confidence: 0.85,
-    related_tests: rule.required_tests
+    finding_id: findingData.id,
+    name: findingData.label,
+    description: findingData.patient_friendly || findingData.description,
+    severity: findingData.severity
   };
 
   return { matched: true, finding, confidence: 0.85, why: whyParts.join('; ') };

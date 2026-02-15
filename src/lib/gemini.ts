@@ -242,8 +242,8 @@ export async function generateExplanation(
   safetyBanner: string,
   clinicalSignals?: {
     findings: Array<{ finding_id: string; name: string; description: string; severity: string }>;
-    conditions: Array<{ condition_id: string; name: string; description: string; urgency_level: string }>;
-    actions: Array<{ action_id: string; name: string; guidance_text: string }>;
+    conditions: Array<{ id: string; name: string; urgency_level: string; why_linked: string; confidence: number; related_findings: string[] }>;
+    actions: Array<{ id: string; label: string; description: string; priority: string }>;
   } | null,
   patientSummary?: string | null
 ): Promise<LabExplanation> {
@@ -302,10 +302,10 @@ ${
 ${clinicalSignals.findings.length > 0 ? clinicalSignals.findings.map(f => `- ${f.name} (${f.severity}): ${f.description}`).join("\n") : "None"}
 
 **Conditions to Consider:**
-${clinicalSignals.conditions.length > 0 ? clinicalSignals.conditions.map(c => `- ${c.name} (urgency: ${c.urgency_level}): ${c.description}`).join("\n") : "None"}
+${clinicalSignals.conditions.length > 0 ? clinicalSignals.conditions.map(c => `- ${c.name} (urgency: ${c.urgency_level}): ${c.why_linked}`).join("\n") : "None"}
 
 **Recommended Actions:**
-${clinicalSignals.actions.length > 0 ? clinicalSignals.actions.map(a => `- ${a.name}: ${a.guidance_text}`).join("\n") : "None"}
+${clinicalSignals.actions.length > 0 ? clinicalSignals.actions.map(a => `- ${a.label}: ${a.description}`).join("\n") : "None"}
 
 Use these signals to inform your explanation but maintain educational tone (no definitive diagnosis).
 `
