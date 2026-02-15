@@ -2,14 +2,15 @@
  * src/app/api/explain/route.ts
  *
  * POST /api/explain
- * Body: { extractedText: string }
+ * Body: { extractedText: string, patientContext?: PatientContext }
  *
  * Pipeline:
  *  1. Parse candidate test lines from the raw text (regex heuristics)
  *  2. For each candidate:  embed with Gemini → vector-search Neo4j → normalize
  *  3. Build a compact normalizedTestsContext JSON block
- *  4. Send extractedText + context to Gemini → patient-friendly JSON
- *  5. Return { ok: true, output: LabExplanation, debug: { candidates } }
+ *  4. Evaluate clinical reasoning rules with patient context
+ *  5. Send extractedText + context + clinical signals to Gemini → patient-friendly JSON
+ *  6. Return { ok: true, output: LabExplanation, debug: { candidates } }
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -18,18 +19,41 @@ import { getAllTestNames, getTestByName } from "@/lib/neo4j";
 import { extractLabCandidates } from "@/lib/extractLabs";
 import { evaluateTriage } from "@/lib/triageRules";
 import { redactSensitiveText } from "@/lib/redact";
+import { evaluateRules } from "@/lib/neo4j/reasoning";
+import { PatientContextSchema, summarizePatientContext, type PatientContext } from "@/types/patient";
+import { logger } from "@/lib/logging";
+import type { ParsedTest } from "@/types/reasoning";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { extractedText?: string; redact?: boolean };
+    const body = (await req.json()) as { 
+      extractedText?: string; 
+      redact?: boolean;
+      patientContext?: PatientContext;
+    };
     if (!body.extractedText) {
       return NextResponse.json({ ok: false, error: "Body must contain { extractedText: string }" }, { status: 400 });
     }
     const { extractedText } = body;
     const redact = body.redact ?? true;
     const textForGemini = redact ? redactSensitiveText(extractedText) : extractedText;
+
+    // Validate patient context if provided
+    let patientContext: PatientContext | null = null;
+    if (body.patientContext) {
+      const validation = PatientContextSchema.safeParse(body.patientContext);
+      if (!validation.success) {
+        return NextResponse.json({ 
+          ok: false, 
+          error: "Invalid patient context", 
+          details: validation.error.errors 
+        }, { status: 400 });
+      }
+      patientContext = validation.data;
+      logger.info('Patient context provided', { context: patientContext });
+    }
 
     // 1. Extract candidates from text
     const candidates = extractLabCandidates(extractedText);
@@ -106,11 +130,34 @@ export async function POST(req: NextRequest) {
       }))
     );
 
+    // 4a. Evaluate clinical reasoning rules if patient context provided
+    let clinicalSignals = null;
+    let patientSummary = null;
+    if (patientContext) {
+      const parsedTests: ParsedTest[] = normalized.map((n) => ({
+        canonical_name: n.test.name,
+        value: n.candidate.value,
+        unit: n.candidate.unit ?? n.test.unit ?? '',
+        abnormal_flag: n.candidate.flag ?? null,
+      }));
+
+      clinicalSignals = await evaluateRules(parsedTests, patientContext);
+      patientSummary = summarizePatientContext(patientContext);
+      
+      logger.info('Clinical reasoning executed', {
+        findingsCount: clinicalSignals.findings.length,
+        conditionsCount: clinicalSignals.conditions.length,
+        actionsCount: clinicalSignals.actions.length
+      });
+    }
+
     // 5. Generate explanation
     const explanation = await generateExplanation(
       textForGemini,
       context,
-      triage.safetyBanner
+      triage.safetyBanner,
+      clinicalSignals,
+      patientSummary
     );
 
     return NextResponse.json({

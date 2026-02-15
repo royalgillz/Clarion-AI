@@ -28,6 +28,9 @@ import { Button } from "@/components/Button";
 import { TestResultCard } from "@/components/TestResultCard";
 import { SearchFilter } from "@/components/SearchFilter";
 import { ExportActions } from "@/components/ExportActions";
+import { PatientIntakeForm } from "@/components/PatientIntakeForm";
+import { VoicePlayer } from "@/components/VoicePlayer";
+import type { PatientContext } from "@/types/patient";
 import { colors, gradients, borderRadius, spacing, shadows } from "@/lib/theme";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -51,7 +54,7 @@ interface ExplainResponse {
   };
 }
 
-type Stage = "idle" | "extracting" | "explaining" | "done" | "error";
+type Stage = "idle" | "extracting" | "awaiting_patient_context" | "explaining" | "done" | "error";
 type TestStatus = 'normal' | 'high' | 'low' | 'critical';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -103,16 +106,22 @@ export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<'all' | 'abnormal' | 'normal'>('all');
   
+  // Patient context state
+  const [patientContext, setPatientContext] = useState<PatientContext | null>(null);
+  
   // Abort controller for cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // ── Core Processing Functions ─────────────────────────────────────────────────
 
-  async function runExplain(text: string, source: "pdf" | "ocr") {
+  async function runExplain(text: string, source: "pdf" | "ocr", patientCtx: PatientContext | null = null) {
     setExtractedText(text);
     setExtractSource(source);
+    setPatientContext(patientCtx);
+    
+    const ctxStr = patientCtx ? ' with patient context' : '';
     setStatusMsg(
-      `✅ Extracted ${text.length} chars via ${source.toUpperCase()}. Running knowledge graph lookup…`
+      `✅ Extracted ${text.length} chars via ${source.toUpperCase()}${ctxStr}. Running knowledge graph lookup…`
     );
 
     setStage("explaining");
@@ -124,7 +133,10 @@ export default function HomePage() {
       const explainRes = await fetch("/api/explain", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ extractedText: text }),
+        body: JSON.stringify({ 
+          extractedText: text,
+          patientContext: patientCtx 
+        }),
         signal: abortControllerRef.current.signal,
       });
       
@@ -231,7 +243,11 @@ export default function HomePage() {
         throw new Error("No text extracted from PDF");
       }
 
-      await runExplain(extractedTextResult, extractSourceResult);
+      // After extraction, show patient intake form
+      setExtractedText(extractedTextResult);
+      setExtractSource(extractSourceResult);
+      setStage("awaiting_patient_context");
+      setStatusMsg("✅ Extraction complete! Please provide optional patient context or skip to continue.");
     } catch (error: any) {
       if (error.name === 'AbortError') {
         setStage("idle");
@@ -246,6 +262,18 @@ export default function HomePage() {
       setOcrProgress(null);
     } finally {
       abortControllerRef.current = null;
+    }
+  }
+
+  function handlePatientContextSubmit(context: PatientContext) {
+    if (extractedText && extractSource) {
+      runExplain(extractedText, extractSource, context);
+    }
+  }
+
+  function handlePatientContextSkip() {
+    if (extractedText && extractSource) {
+      runExplain(extractedText, extractSource, null);
     }
   }
 
@@ -284,7 +312,11 @@ export default function HomePage() {
         return;
       }
 
-      await runExplain(ocrData.extractedText, "ocr");
+      // After OCR extraction, show patient intake form
+      setExtractedText(ocrData.extractedText);
+      setExtractSource("ocr");
+      setStage("awaiting_patient_context");
+      setStatusMsg("✅ OCR complete! Please provide optional patient context or skip to continue.");
     } catch (error: any) {
       if (error.name === 'AbortError') {
         setStage("idle");
@@ -447,6 +479,14 @@ export default function HomePage() {
           />
         )}
 
+        {/* Patient Intake Form (after extraction) */}
+        {stage === "awaiting_patient_context" && (
+          <PatientIntakeForm
+            onSubmit={handlePatientContextSubmit}
+            onSkip={handlePatientContextSkip}
+          />
+        )}
+
         {/* Upload Card (only show when idle or error) */}
         {(stage === "idle" || stage === "error") && (
           <>
@@ -559,6 +599,14 @@ export default function HomePage() {
         {/* Export Actions */}
         {result && extractedText && (
           <ExportActions result={result} extractedText={extractedText} />
+        )}
+
+        {/* Voice Player */}
+        {result && (
+          <VoicePlayer
+            text={`${result.patient_summary}\n\nKey findings: ${result.key_findings.slice(0, 3).join('. ')}\n\nNext steps: ${result.next_steps.slice(0, 2).join('. ')}`}
+            label="Listen to Summary"
+          />
         )}
 
         {/* Debug panel */}

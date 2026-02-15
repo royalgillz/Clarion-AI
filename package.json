@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "seed": "npx tsx scripts/seed_neo4j.ts"
+    "seed": "npx tsx scripts/seed_neo4j.ts",
+    "seed:reasoning": "npx tsx scripts/seedReasoningGraph.ts",
+    "test": "jest"
   },
   "dependencies": {
     "dotenv": "^17.3.1",
@@ -17,13 +19,18 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "supports-color": "^9.4.0",
-    "tesseract.js": "^5.1.0"
+    "tesseract.js": "^5.1.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@jest/globals": "^30.2.0",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20",
     "@types/pdf-parse": "^1.1.4",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
     "tsx": "^4.16.2",
     "typescript": "^5"
   }

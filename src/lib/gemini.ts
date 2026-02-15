@@ -239,7 +239,13 @@ export interface LabExplanation {
 export async function generateExplanation(
   extractedText: string,
   normalizedTestsContext: string,
-  safetyBanner: string
+  safetyBanner: string,
+  clinicalSignals?: {
+    findings: Array<{ finding_id: string; name: string; description: string; severity: string }>;
+    conditions: Array<{ condition_id: string; name: string; description: string; urgency_level: string }>;
+    actions: Array<{ action_id: string; name: string; guidance_text: string }>;
+  } | null,
+  patientSummary?: string | null
 ): Promise<LabExplanation> {
   const systemPrompt = `You are a board-certified medical educator who translates clinical lab reports
 into clear, empathetic, jargon-free explanations for patients.
@@ -286,6 +292,25 @@ ${normalizedTestsContext}
 
 ## Safety banner (if present, follow it)
 ${safetyBanner || "(none)"}
+
+${patientSummary ? `## Patient Context\n${patientSummary}\n` : ""}
+
+${
+  clinicalSignals
+    ? `## Clinical Reasoning Signals (from evidence-based rules)
+**Findings Detected:**
+${clinicalSignals.findings.length > 0 ? clinicalSignals.findings.map(f => `- ${f.name} (${f.severity}): ${f.description}`).join("\n") : "None"}
+
+**Conditions to Consider:**
+${clinicalSignals.conditions.length > 0 ? clinicalSignals.conditions.map(c => `- ${c.name} (urgency: ${c.urgency_level}): ${c.description}`).join("\n") : "None"}
+
+**Recommended Actions:**
+${clinicalSignals.actions.length > 0 ? clinicalSignals.actions.map(a => `- ${a.name}: ${a.guidance_text}`).join("\n") : "None"}
+
+Use these signals to inform your explanation but maintain educational tone (no definitive diagnosis).
+`
+    : ""
+}
 
 Now produce the JSON explanation.`;
 
