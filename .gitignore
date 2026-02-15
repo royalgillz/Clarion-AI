@@ -1,0 +1,11 @@
+.env.local
+.env
+node_modules/
+.next/
+out/
+data/*.csv
+data/*.json
+data/*.xpt
+__pycache__/
+*.pyc
+.DS_Store
