@@ -5,6 +5,7 @@
 
 import React, { useRef, DragEvent, ChangeEvent } from 'react';
 import { colors, borderRadius, spacing, shadows } from '@/lib/theme';
+import { UploadCloud, FileText, Check } from 'lucide-react';
 
 interface UploadCardProps {
   onFileSelect: (file: File) => void;
@@ -97,8 +98,8 @@ export function UploadCard({
         e.currentTarget.style.outline = 'none';
       }}
       style={{
-        background: isDragging ? colors.info[50] : colors.white,
-        border: isDragging ? `3px dashed ${colors.info[500]}` : `3px dashed ${colors.gray[300]}`,
+        background: isDragging ? colors.accent.primary + '0d' : colors.white,
+        border: isDragging ? `3px dashed ${colors.accent.primary}` : `3px dashed ${colors.gray[300]}`,
         borderRadius: borderRadius.xl,
         padding: `${spacing['3xl']} ${spacing['2xl']}`,
         textAlign: "center",
@@ -118,11 +119,18 @@ export function UploadCard({
         aria-label="Select PDF file"
       />
       
-      <div style={{ fontSize: 64, marginBottom: spacing.lg }} role="img" aria-hidden="true">
-        {isDragging ? "⬇️" : "📄"}
+      <div style={{
+        width: 64, height: 64, margin: `0 auto ${spacing.lg}`,
+        borderRadius: borderRadius.lg,
+        background: isDragging ? colors.accent.primary : colors.accent.primary + '12',
+        color: isDragging ? colors.white : colors.accent.primary,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        transition: "all 0.2s"
+      }} aria-hidden="true">
+        {isDragging ? <UploadCloud size={30} /> : <FileText size={30} />}
       </div>
-      
-      <h3 style={{ 
+
+      <h3 style={{
         fontSize: 22, 
         fontWeight: 700, 
         marginBottom: spacing.sm,
@@ -146,10 +154,10 @@ export function UploadCard({
         color: colors.white,
         padding: `${spacing.md} ${spacing.xl}`,
         borderRadius: borderRadius.md,
-        fontWeight: 700,
+        fontWeight: 600,
         fontSize: 15,
         marginBottom: spacing.lg,
-        boxShadow: '0 4px 12px rgba(102,126,234,0.3)',
+        boxShadow: '0 4px 12px rgba(14,124,123,0.25)',
         transition: "all 0.2s"
       }}
       aria-hidden="true"
@@ -178,9 +186,11 @@ export function UploadCard({
         fontSize: 12,
         color: colors.primary[600]
       }}>
-        <div>✓ Secure upload</div>
-        <div>✓ Private analysis</div>
-        <div>✓ Fast AI processing</div>
+        {["Secure upload", "Private analysis", "In-memory processing"].map((t) => (
+          <div key={t} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <Check size={13} color={colors.success[600]} aria-hidden="true" /> {t}
+          </div>
+        ))}
       </div>
     </div>
   );

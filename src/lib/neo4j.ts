@@ -51,10 +51,25 @@ export interface TestLookupResult {
   unit: string | null;
 }
 
-/** Get all canonical test names — used to build the list for Gemini matching */
+/** Get all canonical test names - used to build the list for Gemini matching */
 export async function getAllTestNames(): Promise<string[]> {
   const result = await runCypher(`MATCH (t:Test) RETURN t.name AS name ORDER BY t.name`);
   return result.records.map((r) => r.get("name") as string);
+}
+
+export interface TestMatchRow { name: string; loinc: string | null; aliases: string[] }
+
+/** All tests with their LOINC code and aliases - used to match structured (FHIR) rows
+ *  deterministically, without an LLM. */
+export async function getTestsForMatching(): Promise<TestMatchRow[]> {
+  const result = await runCypher(
+    `MATCH (t:Test) RETURN t.name AS name, t.loinc AS loinc, t.aliases AS aliases`
+  );
+  return result.records.map((r) => ({
+    name: r.get("name") as string,
+    loinc: (r.get("loinc") as string | null) ?? null,
+    aliases: (r.get("aliases") as string[] | null) ?? [],
+  }));
 }
 
 /** Exact lookup by canonical name after Gemini has matched it */

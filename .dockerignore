@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.github
+.env*
+npm-debug.log*
+.DS_Store
+docs
+__tests__
+.claude
+CLAUDE.md
+VISION.md
+RESEARCH.md
+NEXT.md
+dev*.log
+tsconfig.tsbuildinfo

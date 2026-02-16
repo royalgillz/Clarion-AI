@@ -4,11 +4,13 @@
  */
 
 import { getDriver } from '@/lib/neo4j';
-import type { 
-  ParsedTest, 
-  ClinicalSignals, 
-  MatchedFinding, 
+import type {
+  ParsedTest,
+  ClinicalSignals,
+  MatchedFinding,
   MatchedCondition,
+  TriggeringTest,
+  GuidelineCitation,
   Rule,
   Finding,
   Condition,
@@ -81,20 +83,22 @@ export async function evaluateRules(
       OPTIONAL MATCH (r)-[:TRIGGERS_FINDING]->(f:Finding)
       OPTIONAL MATCH (r)-[:CONSTRAINED_BY]->(dc:DemographicConstraint)
       OPTIONAL MATCH (r)-[:HAS_THRESHOLD]->(th:Threshold)
-      
+      OPTIONAL MATCH (f)-[:CITES]->(g:GuidelineSource)
+
       RETURN r.id AS rule_id, r.name AS rule_name, r.logic_type AS logic_type,
              r.rationale AS rationale, r.evidence_level AS evidence_level,
              req_tests,
              collect(DISTINCT {
-               test_id: th.test_id, operator: th.operator, 
+               test_id: th.test_id, operator: th.operator,
                value: th.value, value_min: th.value_min, value_max: th.value_max,
                unit: th.unit, ref_type: th.ref_type
              }) AS thresholds,
              {
-               sex: dc.sex, age_min: dc.age_min, age_max: dc.age_max, 
+               sex: dc.sex, age_min: dc.age_min, age_max: dc.age_max,
                pregnancy: dc.pregnancy
              } AS demographics,
-             f{.id, .label, .severity, .description, .patient_friendly} AS finding
+             f{.id, .label, .severity, .description, .patient_friendly} AS finding,
+             collect(DISTINCT g{.org, .title, .statement, .url, .year, .grade}) AS citations
       `,
       { testIds }
     );
@@ -202,23 +206,36 @@ function evaluateRule(
   patientContext: PatientContext | undefined,
   records: any[]
 ): RuleMatchResult {
-  // Check demographic constraints first
-  if (rule.demographic_constraints && patientContext) {
-    const dc = rule.demographic_constraints;
-    
-    if (dc.sex && patientContext.sex_at_birth !== dc.sex && patientContext.sex_at_birth !== 'prefer_not_say') {
+  // Check demographic constraints first.
+  // NOTE: the Cypher always returns a demographics map; its fields are null when
+  // the rule has no CONSTRAINED_BY edge. Use `!= null` (excludes null AND
+  // undefined) so an unconstrained rule isn't accidentally filtered out - the
+  // previous `!== undefined` checks compared against null and rejected almost
+  // every patient, silently disabling the whole reasoning engine.
+  const dc = rule.demographic_constraints;
+  const hasDemographicConstraint =
+    !!dc && (dc.sex != null || dc.age_min != null || dc.age_max != null || dc.pregnancy != null);
+
+  if (hasDemographicConstraint) {
+    // A demographic-gated rule (e.g. pregnancy-specific) must NOT fire when we
+    // can't confirm the patient matches. No context → skip the rule entirely.
+    if (!patientContext) {
       return { matched: false, confidence: 0 };
     }
-    
-    if (dc.age_min !== undefined && patientContext.age < dc.age_min) {
+
+    if (dc!.sex != null && patientContext.sex_at_birth !== dc!.sex && patientContext.sex_at_birth !== 'prefer_not_say') {
       return { matched: false, confidence: 0 };
     }
-    
-    if (dc.age_max !== undefined && patientContext.age > dc.age_max) {
+
+    if (dc!.age_min != null && patientContext.age < dc!.age_min) {
       return { matched: false, confidence: 0 };
     }
-    
-    if (dc.pregnancy !== undefined && patientContext.pregnancy_status === 'pregnant' !== dc.pregnancy) {
+
+    if (dc!.age_max != null && patientContext.age > dc!.age_max) {
+      return { matched: false, confidence: 0 };
+    }
+
+    if (dc!.pregnancy != null && (patientContext.pregnancy_status === 'pregnant') !== dc!.pregnancy) {
       return { matched: false, confidence: 0 };
     }
   }
@@ -238,6 +255,7 @@ function evaluateRule(
 
   let thresholdsMet = 0;
   const whyParts: string[] = [];
+  const triggeringTests: TriggeringTest[] = [];
 
   for (const threshold of rule.thresholds) {
     const test = testsMap.get(threshold.test_id);
@@ -246,32 +264,116 @@ function evaluateRule(
     const met = evaluateThreshold(threshold, test);
     if (met) {
       thresholdsMet++;
-      whyParts.push(`${test.canonical_name} ${test.value} ${test.unit} ${threshold.operator} threshold`);
+      whyParts.push(`${test.canonical_name} ${test.value} ${test.unit} ${formatThresholdTarget(threshold)}`.trim());
+      triggeringTests.push({
+        test: test.canonical_name,
+        value: test.value,
+        unit: test.unit,
+        operator: threshold.operator,
+        threshold_value: threshold.value ?? null,
+        threshold_min: threshold.value_min ?? null,
+        threshold_max: threshold.value_max ?? null,
+      });
     }
   }
 
   const allThresholdsMet = thresholdsMet === rule.thresholds.length;
-  
+
   if (!allThresholdsMet) {
     return { matched: false, confidence: 0 };
   }
 
   // Rule matched! Extract finding
+  const why = whyParts.join('; ');
   const findingRecord = records.find(r => r.get('rule_id') === rule.id);
   const findingData = findingRecord?.get('finding');
-  
+
   if (!findingData || !findingData.id) {
-    return { matched: true, confidence: 0.8, why: whyParts.join('; ') };
+    return { matched: true, confidence: 0.8, why };
   }
+
+  // Real published passages backing this finding (CITES edges in the graph).
+  const rawCitations = (findingRecord?.get('citations') ?? []) as any[];
+  const citations: GuidelineCitation[] = rawCitations
+    .filter((c) => c && c.url && c.statement)
+    .map((c) => ({
+      org: c.org,
+      title: c.title,
+      statement: c.statement,
+      url: c.url,
+      year: typeof c.year?.toNumber === 'function' ? c.year.toNumber() : c.year ?? null,
+      grade: c.grade ?? null,
+    }));
 
   const finding: MatchedFinding = {
     finding_id: findingData.id,
     name: findingData.label,
     description: findingData.patient_friendly || findingData.description,
-    severity: findingData.severity
+    severity: findingData.severity,
+    // Provenance - traceable back to the rule and the thresholds it crossed.
+    rule_id: rule.id,
+    rule_name: rule.name,
+    rationale: rule.rationale,
+    evidence_level: rule.evidence_level,
+    why,
+    triggering_tests: triggeringTests,
+    citations,
   };
 
-  return { matched: true, finding, confidence: 0.85, why: whyParts.join('; ') };
+  return { matched: true, finding, confidence: 0.85, why };
+}
+
+/** Render a threshold's target side for a human-readable "why" line. */
+function formatThresholdTarget(th: any): string {
+  const u = th.unit ? ` ${th.unit}` : '';
+  switch (th.operator) {
+    case '>': return `> ${th.value}${u}`;
+    case '>=': return `≥ ${th.value}${u}`;
+    case '<': return `< ${th.value}${u}`;
+    case '<=': return `≤ ${th.value}${u}`;
+    case 'between': return `outside ${th.value_min}-${th.value_max}${u}`;
+    case 'abnormal_flag': return `flagged outside the reference range`;
+    default: return `crossed threshold`;
+  }
+}
+
+/**
+ * Normalize a unit string to a canonical token so we can compare a test's unit
+ * against a threshold's unit. Numerically-equivalent units map to the same token
+ * (e.g. mmol/L ≡ mEq/L for monovalent ions; mcL ≡ µL ≡ uL).
+ */
+function normalizeUnit(raw: string | null | undefined): string {
+  if (!raw) return '';
+  let u = raw.toLowerCase().trim();
+  u = u.replace(/µ/g, 'u').replace(/\s+/g, '');
+  // cell-count notations → "k_per_ul" (thousands) / "m_per_ul" (millions)
+  if (/^(10\^?3|10\*3|10e3|x?10\^?3|k)\/(u|mc)?l$/.test(u) || /thou/.test(u)) return 'k_per_ul';
+  if (/^(10\^?6|10\*6|10e6|x?10\^?6|m)\/(u|mc)?l$/.test(u) || /^million/.test(u)) return 'm_per_ul';
+  if (u === '%') return '%';
+  if (u === 'g/dl') return 'g/dl';
+  if (u === 'mg/dl') return 'mg/dl';
+  if (u === 'mmol/l' || u === 'meq/l') return 'mmol/l'; // 1:1 for monovalent electrolytes
+  if (u === 'u/l' || u === 'iu/l') return 'u/l';
+  if (u === 'miu/l' || u === 'uiu/ml' || u === 'miu/ml') return 'miu/l';
+  if (u === 'ng/dl') return 'ng/dl';
+  if (u === 'fl') return 'fl';
+  if (u === 'pg') return 'pg';
+  if (u.startsWith('ml/min')) return 'ml/min/1.73m2';
+  return u;
+}
+
+/**
+ * A threshold should only be applied when the test's unit is compatible with the
+ * threshold's unit. This prevents a value reported in the wrong unit (e.g. a
+ * neutrophil PERCENTAGE) from being compared against an absolute-count threshold
+ * and producing a false finding. When either unit is missing we don't block -
+ * that preserves existing behavior for rows without an explicit unit.
+ */
+function unitsCompatible(testUnit: string, thresholdUnit: string | null | undefined): boolean {
+  const a = normalizeUnit(testUnit);
+  const b = normalizeUnit(thresholdUnit);
+  if (!a || !b) return true;
+  return a === b;
 }
 
 /**
@@ -280,6 +382,12 @@ function evaluateRule(
 function evaluateThreshold(threshold: any, test: ParsedTest): boolean {
   const value = test.value;
   if (value === undefined) return false;
+
+  // Unit guard: don't apply an absolute-count threshold to a percentage, etc.
+  // (abnormal_flag rules are unit-agnostic, so they're exempt.)
+  if (threshold.operator !== 'abnormal_flag' && !unitsCompatible(test.unit, threshold.unit)) {
+    return false;
+  }
 
   switch (threshold.operator) {
     case '>':

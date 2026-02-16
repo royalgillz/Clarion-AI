@@ -9,10 +9,10 @@
  *   "Hemoglobin (Hgb) 11.2 g/dL 13.5 - 17.5 L Below normal range"
  *
  * Four strategies are tried in order:
- *   1. Full row  – name + value + unit + range + optional flag (confidence 0.95)
- *   2. Partial   – name + value + unit, no range (confidence 0.75)
- *   3. Abbrev    – known 2-6 letter abbreviation + numeric value (confidence 0.60)
- *   4. Multiline – test name on one line, value/unit/range on the next (confidence 0.85)
+ *   1. Full row  - name + value + unit + range + optional flag (confidence 0.95)
+ *   2. Partial   - name + value + unit, no range (confidence 0.75)
+ *   3. Abbrev    - known 2-6 letter abbreviation + numeric value (confidence 0.60)
+ *   4. Multiline - test name on one line, value/unit/range on the next (confidence 0.85)
  */
 
 export interface LabCandidate {
@@ -27,11 +27,19 @@ export interface LabCandidate {
 // ── Known CBC abbreviations (used for Strategy 3) ────────────────────────────
 
 const KNOWN_ABBREVS = [
+  // CBC
   "WBC", "RBC", "HGB", "HCT", "MCV", "MCH", "MCHC", "RDW",
   "PLT", "MPV",
   "NEUT", "LYMPH", "MONO", "EOS", "BASO",
   "ANC", "ALC",
   "RETIC", "NRBC",
+  // CMP
+  "GLU", "BUN", "CREAT", "CR", "NA", "CA",
+  "ALT", "SGPT", "AST", "SGOT", "TBIL", "BILI", "ALB", "EGFR", "GFR",
+  // Lipid
+  "CHOL", "LDL", "HDL", "TRIG", "TG",
+  // Thyroid
+  "TSH", "FT4", "T4",
 ];
 
 // ── Known test name keywords (used to validate candidate names) ───────────────
@@ -55,6 +63,25 @@ const KNOWN_KEYWORDS = [
   "absolute lymphocyte", "alc",
   "reticulocyte", "retic",
   "nucleated red", "nrbc",
+  // CMP
+  "glucose",
+  "urea nitrogen", "bun",
+  "creatinine",
+  "egfr", "glomerular filtration", "gfr",
+  "sodium",
+  "potassium",
+  "calcium",
+  "alanine aminotransferase", "alt", "sgpt",
+  "aspartate aminotransferase", "ast", "sgot",
+  "bilirubin",
+  "albumin",
+  // Lipid
+  "cholesterol",
+  "ldl", "hdl",
+  "triglyceride",
+  // Thyroid
+  "thyroid stimulating hormone", "tsh", "thyrotropin",
+  "free t4", "thyroxine", "ft4",
 ];
 
 // ── Lines that are definitely NOT test rows ───────────────────────────────────
@@ -141,8 +168,13 @@ const UNIT_ALT = [
   "mg\\/d[Ll]",
   "mmol\\/[Ll]",
   "mEq\\/[Ll]",
+  "mIU\\/[Ll]",
+  "[µu]IU\\/m[Ll]",
   "U\\/[Ll]",
   "IU\\/[Ll]",
+  "ng\\/d[Ll]",
+  "ng\\/m[Ll]",
+  "mL\\/min(?:\\/1\\.73\\s?m2)?",
   "%",
   "f[Ll]",
   "p[Gg]",
@@ -154,8 +186,8 @@ const UNIT_ALT = [
 // Numeric value: integer or decimal
 const NUM = "\\d+\\.?\\d*";
 
-// Reference range: two numbers separated by dash/en-dash
-const RANGE = `(${NUM}\\s*[-–]\\s*${NUM})`;
+// Reference range: two numbers separated by a dash
+const RANGE = `(${NUM}\\s*-\\s*${NUM})`;
 
 // Flag at end of line (word boundary so "H" doesn't grab "Hct")
 const FLAG = "(HH|LL|H|L|HIGH|LOW|CRIT|[*!]{1,2})(?:\\b|$)";
@@ -167,32 +199,32 @@ const NAME_CAPTURE = "([A-Za-z][\\w\\s\\-\\/,().%#]+?)";
 
 // ── Compiled regexes ──────────────────────────────────────────────────────────
 
-// Strategy 1 – full row:  name  value  unit  range  [flag]
+// Strategy 1 - full row:  name  value  unit  range  [flag]
 const RE_FULL = new RegExp(
   `^${NAME_CAPTURE}\\s+(${NUM})\\s+(${UNIT_ALT})\\s+${RANGE}(?:\\s+${FLAG})?`,
   "i"
 );
 
-// Strategy 2 – partial:  name  value  unit  [flag]
+// Strategy 2 - partial:  name  value  unit  [flag]
 const RE_PARTIAL = new RegExp(
   `^${NAME_CAPTURE}\\s+(${NUM})\\s+(${UNIT_ALT})(?:\\s+${FLAG})?`,
   "i"
 );
 
-// Strategy 3 – abbreviation:  WBC  11.8  [unit]
+// Strategy 3 - abbreviation:  WBC  11.8  [unit]
 const RE_ABBREV = new RegExp(
   `^(${KNOWN_ABBREVS.join("|")})\\s*:?\\s*(${NUM})(?:\\s+(${UNIT_ALT}))?`,
   "i"
 );
 
-// Strategy 4 (multiline) – value line:  value  unit  range  [flag]
+// Strategy 4 (multiline) - value line:  value  unit  range  [flag]
 // Also handles OCR quirk where unit and range are concatenated: "10^3/mcL4.5 - 11.0"
 const RE_VALUE_LINE = new RegExp(
   `^(${NUM})\\s+(${UNIT_ALT})\\s*${RANGE}(?:\\s+${FLAG})?`,
   "i"
 );
 
-// Strategy 5 – OCR multiline with separated components
+// Strategy 5 - OCR multiline with separated components
 // Handles: line1=testname, line2=value, line3=unit+range, line4=flag
 const RE_JUST_VALUE = new RegExp(`^(${NUM})$`);
 const RE_UNIT_RANGE = new RegExp(`^(${UNIT_ALT})\\s*${RANGE}$`, "i");
@@ -219,12 +251,12 @@ export function extractLabCandidates(text: string): LabCandidate[] {
 
   console.log(`[extractLabs] Processing ${lines.length} lines`);
 
-  // ── Strategies 1–3: single-line matching ─────────────────────────────────
+  // ── Strategies 1-3: single-line matching ─────────────────────────────────
 
   for (const line of lines) {
     if (shouldSkip(line)) continue;
 
-    // Strategy 1 — full row
+    // Strategy 1 - full row
     const m1 = line.match(RE_FULL);
     if (m1) {
       const name = m1[1].trim();
@@ -241,7 +273,7 @@ export function extractLabCandidates(text: string): LabCandidate[] {
       }
     }
 
-    // Strategy 2 — partial row (name + value + unit, no range)
+    // Strategy 2 - partial row (name + value + unit, no range)
     const m2 = line.match(RE_PARTIAL);
     if (m2) {
       const name = m2[1].trim();
@@ -258,7 +290,7 @@ export function extractLabCandidates(text: string): LabCandidate[] {
       }
     }
 
-    // Strategy 3 — known abbreviation
+    // Strategy 3 - known abbreviation
     const m3 = line.match(RE_ABBREV);
     if (m3) {
       addCandidate({

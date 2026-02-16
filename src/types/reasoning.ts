@@ -66,11 +66,46 @@ export interface Action {
   priority: 'low' | 'medium' | 'high' | 'critical';
 }
 
+/**
+ * A published guideline/reference passage that backs a finding. These are stored
+ * as :GuidelineSource nodes linked to a Finding via a CITES edge, so every flag
+ * can quote the real source it rests on - not an LLM-generated citation. This is
+ * the "show your work" differentiator no incumbent exposes to patients, and the
+ * basis the user can independently review (FDA non-device CDS posture).
+ */
+export interface GuidelineCitation {
+  org: string;        // e.g. "USPSTF", "American Diabetes Association", "WHO"
+  title: string;      // document/page title
+  statement: string;  // the quoted passage that supports the finding
+  url: string;        // real, verified source URL
+  year?: number | null;
+  grade?: string | null; // e.g. "USPSTF Grade A/B", "ADA guideline"
+}
+
+/** A single test value that crossed a rule's threshold - the evidence for a finding. */
+export interface TriggeringTest {
+  test: string;            // canonical test name
+  value: number;           // the patient's reported value
+  unit: string;
+  operator: string;        // '<', '>', 'between', 'abnormal_flag', etc.
+  threshold_value: number | null;
+  threshold_min?: number | null;
+  threshold_max?: number | null;
+}
+
 export interface MatchedFinding {
   finding_id: string;
   name: string;
   description: string;
   severity: string;
+  // Provenance - why this finding fired, traceable to the reasoning graph.
+  rule_id: string;
+  rule_name: string;
+  rationale: string;
+  evidence_level: string;
+  why: string;                       // human-readable, e.g. "Hemoglobin 11.2 g/dL < 12.0 g/dL"
+  triggering_tests: TriggeringTest[];
+  citations?: GuidelineCitation[];   // real guideline passages backing this finding
 }
 
 export interface MatchedCondition {

@@ -1,0 +1,36 @@
+name: Sync to Hugging Face Space
+
+# On every push to main (and on demand), mirror the repo to the Hugging Face Space,
+# which rebuilds the Docker image and redeploys.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Avoid overlapping syncs.
+concurrency:
+  group: hf-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history + LFS)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: Sehajgill
+          HF_SPACE: Clarion-AI
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN secret is not set on this repository."
+            exit 1
+          fi
+          git lfs install
+          git push --force "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE}.git" HEAD:main

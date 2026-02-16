@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pdfParse from "pdf-parse";
 import { ocrPdfBuffer, OcrError } from "@/lib/ocr";
 
-// Force Node runtime – NOT Edge (pdf-parse needs fs + Buffer)
+// Force Node runtime - NOT Edge (pdf-parse needs fs + Buffer)
 export const runtime = "nodejs";
 
 // Helper to create Server-Sent Events stream

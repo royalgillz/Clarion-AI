@@ -4,6 +4,7 @@
 
 import React from 'react';
 import { colors, borderRadius, spacing } from '@/lib/theme';
+import { FileText, ScanLine, ClipboardList, Brain, Sparkles, Check, LucideIcon } from 'lucide-react';
 
 type Stage = "idle" | "extracting" | "awaiting_patient_context" | "explaining" | "done" | "error";
 
@@ -12,12 +13,12 @@ interface PipelineIndicatorProps {
 }
 
 export function PipelineIndicator({ currentStage }: PipelineIndicatorProps) {
-  const steps = [
-    { id: "upload", label: "Upload PDF", icon: "📄", stage: "idle" },
-    { id: "extract", label: "OCR / Extract", icon: "🔍", stage: "extracting" },
-    { id: "context", label: "Patient Info", icon: "📋", stage: "awaiting_patient_context" },
-    { id: "analyze", label: "AI Analysis", icon: "🧠", stage: "explaining" },
-    { id: "results", label: "Explanation", icon: "✨", stage: "done" },
+  const steps: { id: string; label: string; Icon: LucideIcon; stage: string }[] = [
+    { id: "upload", label: "Upload PDF", Icon: FileText, stage: "idle" },
+    { id: "extract", label: "Extract / OCR", Icon: ScanLine, stage: "extracting" },
+    { id: "context", label: "Patient Info", Icon: ClipboardList, stage: "awaiting_patient_context" },
+    { id: "analyze", label: "Reasoning", Icon: Brain, stage: "explaining" },
+    { id: "results", label: "Explanation", Icon: Sparkles, stage: "done" },
   ];
 
   const getStepStatus = (stepStage: string) => {
@@ -50,32 +51,31 @@ export function PipelineIndicator({ currentStage }: PipelineIndicatorProps) {
               alignItems: "center",
               gap: spacing.xs
             }}>
-              <div 
+              <div
                 style={{
-                  width: 48,
-                  height: 48,
+                  width: 44,
+                  height: 44,
                   borderRadius: borderRadius.full,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: 20,
-                  background: status === "active" ? colors.info[500] : 
-                             status === "completed" ? colors.success[500] : colors.primary[200],
-                  color: status === "pending" ? colors.primary[500] : colors.white,
-                  border: status === "active" ? `3px solid ${colors.info[300]}` : "none",
+                  background: status === "active" ? colors.accent.primary :
+                             status === "completed" ? colors.success[600] : colors.primary[100],
+                  color: status === "pending" ? colors.primary[400] : colors.white,
+                  border: status === "active" ? `3px solid ${colors.accent.lighter}` : "none",
                   transition: "all 0.3s ease",
-                  boxShadow: status === "active" ? `0 0 0 4px ${colors.info[50]}` : "none"
+                  boxShadow: status === "active" ? `0 0 0 4px ${colors.accent.primary}1a` : "none"
                 }}
                 role="img"
                 aria-label={`${step.label} - ${status}`}
               >
-                {step.icon}
+                {status === "completed" ? <Check size={20} /> : <step.Icon size={19} />}
               </div>
               <span style={{
                 fontSize: 11,
                 fontWeight: 600,
-                color: status === "active" ? colors.info[500] : 
-                       status === "completed" ? colors.success[500] : colors.gray[400],
+                color: status === "active" ? colors.accent.primary :
+                       status === "completed" ? colors.success[600] : colors.gray[400],
                 textAlign: "center",
                 maxWidth: 70
               }}>

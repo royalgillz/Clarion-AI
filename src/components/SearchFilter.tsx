@@ -4,6 +4,7 @@
 
 import React, { ChangeEvent } from 'react';
 import { colors, borderRadius, spacing } from '@/lib/theme';
+import { Search } from 'lucide-react';
 
 interface SearchFilterProps {
   searchQuery: string;
@@ -36,14 +37,16 @@ export function SearchFilter({
     }}>
       {/* Search Input */}
       <div style={{ flex: '1 1 300px' }}>
-        <label htmlFor="test-search" style={{ 
-          display: 'block',
+        <label htmlFor="test-search" style={{
           fontSize: 12,
           fontWeight: 600,
           color: colors.primary[600],
-          marginBottom: spacing.xs
+          marginBottom: spacing.xs,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
         }}>
-          🔍 Search Tests
+          <Search size={13} aria-hidden="true" /> Search tests
         </label>
         <input
           id="test-search"
@@ -61,7 +64,7 @@ export function SearchFilter({
             transition: 'border-color 0.2s'
           }}
           onFocus={(e) => {
-            e.currentTarget.style.borderColor = colors.info[500];
+            e.currentTarget.style.borderColor = colors.accent.primary;
           }}
           onBlur={(e) => {
             e.currentTarget.style.borderColor = colors.primary[200];
@@ -87,10 +90,10 @@ export function SearchFilter({
               onClick={() => onFilterChange(filter)}
               style={{
                 padding: `${spacing.sm} ${spacing.md}`,
-                border: `2px solid ${filterStatus === filter ? colors.info[500] : colors.primary[200]}`,
+                border: `2px solid ${filterStatus === filter ? colors.accent.primary : colors.primary[200]}`,
                 borderRadius: borderRadius.md,
-                background: filterStatus === filter ? colors.info[50] : colors.white,
-                color: filterStatus === filter ? colors.info[700] : colors.primary[600],
+                background: filterStatus === filter ? colors.accent.primary + '12' : colors.white,
+                color: filterStatus === filter ? colors.accent.secondary : colors.primary[600],
                 fontSize: 13,
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -98,7 +101,7 @@ export function SearchFilter({
                 textTransform: 'capitalize'
               }}
               onFocus={(e) => {
-                e.currentTarget.style.outline = `3px solid ${colors.info[300]}`;
+                e.currentTarget.style.outline = `3px solid ${colors.accent.lighter}`;
                 e.currentTarget.style.outlineOffset = '2px';
               }}
               onBlur={(e) => {

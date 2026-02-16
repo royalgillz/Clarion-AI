@@ -4,6 +4,7 @@
  */
 
 import React, { ButtonHTMLAttributes, CSSProperties } from 'react';
+import { Loader2 } from 'lucide-react';
 import { buttonStyles, focusRing } from '@/lib/theme';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -47,7 +48,11 @@ export function Button({
         props.onBlur?.(e);
       }}
     >
-      {isLoading ? '⏳ Processing...' : children}
+      {isLoading ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <Loader2 size={16} className="spin" aria-hidden="true" /> Processing…
+        </span>
+      ) : children}
     </button>
   );
 }

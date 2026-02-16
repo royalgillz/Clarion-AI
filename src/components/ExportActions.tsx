@@ -227,7 +227,7 @@ export function ExportActions({ result, extractedText }: ExportActionsProps) {
       flexWrap: 'wrap',
       alignItems: 'center'
     }}>
-      <div style={{ flex: '1 0 auto' }}>
+      <div style={{ flex: '1 1 auto', minWidth: 0 }}>
         <div style={{ fontWeight: 700, color: colors.primary[700], marginBottom: spacing.xs }}>
           📥 Export Results
         </div>

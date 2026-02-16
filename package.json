@@ -11,7 +11,10 @@
     "test": "jest"
   },
   "dependencies": {
+    "@elevenlabs/react": "^1.7.0",
     "dotenv": "^17.3.1",
+    "fhirclient": "^2.6.3",
+    "lucide-react": "^0.512.0",
     "neo4j-driver": "^5.21.0",
     "next": "^16.1.6",
     "pdf-parse": "^1.1.1",
@@ -30,6 +33,7 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "jest": "^30.2.0",
+    "playwright": "^1.61.0",
     "ts-jest": "^29.4.6",
     "tsx": "^4.16.2",
     "typescript": "^5"

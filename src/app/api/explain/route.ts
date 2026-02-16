@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { matchTestName, matchTestNamesBatch, generateExplanation } from "@/lib/gemini";
-import { getAllTestNames, getTestByName } from "@/lib/neo4j";
+import { getAllTestNames, getTestByName, getTestsForMatching } from "@/lib/neo4j";
 import { extractLabCandidates } from "@/lib/extractLabs";
 import { evaluateTriage } from "@/lib/triageRules";
 import { redactSensitiveText } from "@/lib/redact";
@@ -28,62 +28,113 @@ export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { 
-      extractedText?: string; 
+    const body = (await req.json()) as {
+      extractedText?: string;
       redact?: boolean;
       patientContext?: PatientContext;
+      // Already-structured rows from a connected source (SMART on FHIR). When present
+      // we skip OCR/regex extraction entirely and treat these values as ground truth.
+      structuredTests?: Array<{ name: string; value: string | number; unit?: string | null; range?: string | null; flag?: string | null; loinc?: string | null }>;
     };
-    if (!body.extractedText) {
-      return NextResponse.json({ ok: false, error: "Body must contain { extractedText: string }" }, { status: 400 });
+
+    const structured = Array.isArray(body.structuredTests) ? body.structuredTests : null;
+    if (!body.extractedText && !(structured && structured.length)) {
+      return NextResponse.json({ ok: false, error: "Body must contain { extractedText } or { structuredTests }" }, { status: 400 });
     }
-    const { extractedText } = body;
     const redact = body.redact ?? true;
-    const textForGemini = redact ? redactSensitiveText(extractedText) : extractedText;
 
     // Validate patient context if provided
     let patientContext: PatientContext | null = null;
     if (body.patientContext) {
       const validation = PatientContextSchema.safeParse(body.patientContext);
       if (!validation.success) {
-        return NextResponse.json({ 
-          ok: false, 
-          error: "Invalid patient context", 
-          details: validation.error.issues 
+        return NextResponse.json({
+          ok: false,
+          error: "Invalid patient context",
+          details: validation.error.issues
         }, { status: 400 });
       }
       patientContext = validation.data;
       logger.info('Patient context provided', { context: patientContext });
     }
 
-    // 1. Extract candidates from text
-    const candidates = extractLabCandidates(extractedText);
-    console.log(`[/api/explain] ${candidates.length} candidates found`);
-    console.log(`[/api/explain] Extracted text preview (first 500 chars):`, extractedText.substring(0, 500));
-    if (candidates.length === 0) {
-      console.log(`[/api/explain] Full extracted text:`, extractedText);
+    // 1. Build candidates - either from structured FHIR rows or by parsing text.
+    type Cand = { raw_test_name: string; value: string; unit: string | null; range: string | null; flag: string | null; confidence: number; loinc?: string | null };
+    let candidates: Cand[];
+    let textForGemini: string;
+    const inputSource: "fhir" | "text" = structured && structured.length ? "fhir" : "text";
+
+    if (inputSource === "fhir") {
+      candidates = structured!
+        .map((t) => ({
+          raw_test_name: String(t.name ?? "").trim(),
+          value: t.value != null ? String(t.value) : "",
+          unit: t.unit ?? null,
+          range: t.range ?? null,
+          flag: t.flag ?? null,
+          confidence: 1, // structured source - values are authoritative, not OCR-guessed
+          loinc: t.loinc ?? null,
+        }))
+        .filter((c) => c.raw_test_name && c.value);
+      textForGemini = candidates
+        .map((c) => `${c.raw_test_name}: ${c.value}${c.unit ? ` ${c.unit}` : ""}${c.range ? ` (ref ${c.range})` : ""}${c.flag ? ` [${c.flag}]` : ""}`)
+        .join("\n");
+    } else {
+      const extractedText = body.extractedText as string;
+      textForGemini = redact ? redactSensitiveText(extractedText) : extractedText;
+      candidates = extractLabCandidates(extractedText).map((c) => ({
+        raw_test_name: c.raw_test_name,
+        value: c.value,
+        unit: c.unit ?? null,
+        range: c.range ?? null,
+        flag: c.flag ?? null,
+        confidence: c.confidence,
+      }));
+    }
+    console.log(`[/api/explain] source=${inputSource}, ${candidates.length} candidates`);
+
+    // 2. Match each raw candidate name to a canonical test.
+    let matches: Map<string, string | null>;
+    let matchSource: "gemini" | "loinc";
+    if (inputSource === "fhir") {
+      // FHIR rows carry LOINC codes, so we match deterministically - no LLM call, which
+      // means this path keeps working even when the Gemini daily quota is exhausted.
+      matchSource = "loinc";
+      const testRows = await getTestsForMatching();
+      const byLoinc = new Map<string, string>();
+      const byNameAlias = new Map<string, string>();
+      for (const t of testRows) {
+        if (t.loinc) byLoinc.set(t.loinc.trim(), t.name);
+        byNameAlias.set(t.name.trim().toLowerCase(), t.name);
+        for (const a of t.aliases) byNameAlias.set(String(a).trim().toLowerCase(), t.name);
+      }
+      matches = new Map();
+      for (const c of candidates) {
+        const byCode = c.loinc ? byLoinc.get(c.loinc.trim()) : undefined;
+        const byName = byNameAlias.get(c.raw_test_name.trim().toLowerCase());
+        matches.set(c.raw_test_name, byCode ?? byName ?? null);
+      }
+    } else {
+      // Free text: ask Gemini to normalize the raw names in one batch call.
+      matchSource = "gemini";
+      const canonicalNames = await getAllTestNames();
+      const rawNames = candidates.map((c) => c.raw_test_name);
+      matches = await matchTestNamesBatch(rawNames, canonicalNames);
     }
 
-    // 2. Get all canonical names from Neo4j (one fast query)
-    const canonicalNames = await getAllTestNames();
-
-    // 3. Use Gemini AI to match all candidates in ONE batch call (reduces rate limits)
-    // Note: Embedding-based vector search disabled (API key doesn't support embedContent)
-    const rawNames = candidates.map(c => c.raw_test_name);
-    const matches = await matchTestNamesBatch(rawNames, canonicalNames);
-    
     const normalized = [];
     for (const c of candidates) {
       const matched = matches.get(c.raw_test_name);
       if (!matched) continue;
-      
+
       const lookup = await getTestByName(matched);
       if (!lookup) continue;
-      
-      normalized.push({ 
-        candidate: c, 
-        matchSource: "gemini" as const, 
-        matchScore: null, 
-        ...lookup 
+
+      normalized.push({
+        candidate: c,
+        matchSource,
+        matchScore: null,
+        ...lookup
       });
     }
 
@@ -104,23 +155,19 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 4. Build context block for Gemini
-    const context = JSON.stringify(
-      normalized.map((n) => ({
-        canonical: n.test.name,
-        raw_test_name: n.candidate.raw_test_name,
-        value: n.candidate.value,
-        unit: n.candidate.unit ?? n.test.unit,
-        range: n.candidate.range,
-        flag: n.candidate.flag,
-        confidence: n.candidate.confidence,
-        nhanes_variable: n.test.nhanes_variable,
-        label: n.test.label,
-        panel: n.panel,
-        aliases: n.test.aliases,
-      })),
-      null, 2
-    );
+    // 4. Build authoritative (ground-truth) test list for Gemini.
+    // Values and reference ranges come straight from the report - the LLM is
+    // forbidden from authoring them (see generateExplanation / RESEARCH.md §3).
+    const authoritativeTests = normalized.map((n) => ({
+      canonical: n.test.name,
+      value: n.candidate.value,
+      unit: n.candidate.unit ?? n.test.unit ?? null,
+      range: n.candidate.range,
+      flag: n.candidate.flag,
+      confidence: n.candidate.confidence,
+      label: n.test.label,
+      panel: n.panel,
+    }));
 
     const triage = evaluateTriage(
       normalized.map((n) => ({
@@ -130,32 +177,34 @@ export async function POST(req: NextRequest) {
       }))
     );
 
-    // 4a. Evaluate clinical reasoning rules if patient context provided
-    let clinicalSignals = null;
+    // 4a. Evaluate clinical reasoning rules. Always run - demographic-gated rules
+    // (e.g. pregnancy) simply won't fire without context, but threshold rules do.
+    const parsedTests: ParsedTest[] = normalized.map((n) => ({
+      canonical_name: n.test.name,
+      value: parseFloat(n.candidate.value) || 0,
+      unit: n.candidate.unit ?? n.test.unit ?? '',
+      abnormal_flag: n.candidate.flag ?? null,
+    }));
+
+    const clinicalSignals = await evaluateRules(parsedTests, patientContext ?? undefined);
+
     let patientSummary = null;
     if (patientContext) {
-      const parsedTests: ParsedTest[] = normalized.map((n) => ({
-        canonical_name: n.test.name,
-        value: parseFloat(n.candidate.value) || 0,
-        unit: n.candidate.unit ?? n.test.unit ?? '',
-        abnormal_flag: n.candidate.flag ?? null,
-      }));
-
-      clinicalSignals = await evaluateRules(parsedTests, patientContext);
       const summary = summarizePatientContext(patientContext);
       patientSummary = `Patient: ${summary.age_group}, ${summary.sex_display}${summary.pregnancy_display ? `, ${summary.pregnancy_display}` : ''}. Symptoms: ${summary.symptoms_display.join(', ') || 'none reported'}.`;
-      
-      logger.info('Clinical reasoning executed', {
-        findingsCount: clinicalSignals.findings.length,
-        conditionsCount: clinicalSignals.conditions.length,
-        actionsCount: clinicalSignals.actions.length
-      });
     }
+
+    logger.info('Clinical reasoning executed', {
+      hasContext: !!patientContext,
+      findingsCount: clinicalSignals.findings.length,
+      conditionsCount: clinicalSignals.conditions.length,
+      actionsCount: clinicalSignals.actions.length
+    });
 
     // 5. Generate explanation
     const explanation = await generateExplanation(
       textForGemini,
-      context,
+      authoritativeTests,
       triage.safetyBanner,
       clinicalSignals,
       patientSummary
@@ -164,6 +213,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       output: explanation,
+      reasoning: clinicalSignals,
       debug: {
         candidatesFound: candidates.length,
         testsNormalized: normalized.length,
