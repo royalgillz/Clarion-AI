@@ -15,22 +15,23 @@ COPY . .
 RUN npm run build
 
 # ---- runtime ----
+# The node base image already ships a "node" user at UID 1000, which is the user
+# Hugging Face Spaces run containers as. Reuse it instead of creating one.
 FROM node:22-slim AS runner
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      graphicsmagick ghostscript ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+RUN chown node:node /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=7860 \
     HOSTNAME=0.0.0.0 \
-    HOME=/home/user
-# OCR fallback (pdf2pic) shells out to graphicsmagick + ghostscript.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      graphicsmagick ghostscript ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd -m -u 1000 user
+    HOME=/home/node
 # Standalone output: server.js + traced node_modules, plus static assets and public/.
-COPY --from=builder --chown=1000:1000 /app/public ./public
-COPY --from=builder --chown=1000:1000 /app/.next/standalone ./
-COPY --from=builder --chown=1000:1000 /app/.next/static ./.next/static
-USER 1000
+COPY --from=builder --chown=node:node /app/public ./public
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+USER node
 EXPOSE 7860
 CMD ["node", "server.js"]
