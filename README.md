@@ -104,12 +104,6 @@ questions to ask, next steps, and age/sex screening reminders.
 
 ![Connect records](docs/img/connect.png)
 
-### Works on small screens
-
-Responsive down to foldable cover-screen widths, with a sticky nav.
-
-<p align="center"><img src="docs/img/mobile-overview.png" width="320" alt="Mobile dashboard"></p>
-
 ---
 
 ## How it works

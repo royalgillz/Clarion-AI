@@ -199,16 +199,28 @@ Respond with ONLY the exact canonical name from the list, or NONE. No explanatio
   return match ?? null;
 }
 
+/** A canonical test plus the aliases/abbreviations a report might use for it. */
+export interface CanonicalTest {
+  name: string;
+  aliases?: string[];
+}
+
 /**
  * Batch version: Match multiple test names in one API call (reduces rate limits).
  *
  * Returns JSON ({raw, canonical}[]) and resolves each entry by raw-name identity
  * (falling back to position) so a reordered/wrapped model response can't silently
  * misalign matches - the bug the previous positional parser was prone to.
+ *
+ * Accepts each canonical test WITH its aliases. The aliases serve two purposes:
+ * they're shown to the model as hints (so it knows "Hgb" -> "Hemoglobin"), and the
+ * resolver accepts them too - so when the model answers with an abbreviation
+ * ("WBC", "ANC") instead of the exact canonical string, the match is still kept
+ * instead of being silently dropped.
  */
 export async function matchTestNamesBatch(
   rawNames: string[],
-  canonicalNames: string[]
+  canonicalTests: CanonicalTest[]
 ): Promise<Map<string, string | null>> {
   if (rawNames.length === 0) return new Map();
 
@@ -219,8 +231,13 @@ If a raw name has no reasonable match (e.g. it is clearly not a blood test), use
 Raw names (return one result for each, in this order):
 ${rawNames.map((n, i) => `${i + 1}. ${n}`).join("\n")}
 
-Canonical master list (use these EXACT strings):
-${canonicalNames.map((n) => `- ${n}`).join("\n")}
+Canonical master list (use the EXACT name string; aliases are only hints):
+${canonicalTests
+    .map((t) => {
+      const al = (t.aliases ?? []).filter((a) => a.toLowerCase() !== t.name.toLowerCase());
+      return `- ${t.name}${al.length ? ` (also written as: ${al.join(", ")})` : ""}`;
+    })
+    .join("\n")}
 
 Respond with ONLY a JSON array, one object per raw name:
 [{"raw": "<the raw name>", "canonical": "<exact canonical name or null>"}]`;
@@ -246,8 +263,14 @@ Respond with ONLY a JSON array, one object per raw name:
   const answer = extractText(data).trim();
   const results = new Map<string, string | null>();
 
-  // Case-insensitive canonical resolver - only accepts names actually in the list.
-  const canonByLower = new Map(canonicalNames.map((n) => [n.toLowerCase(), n]));
+  // Resolver keyed by canonical name AND every alias, lowercased. Accepting aliases
+  // means a model answer of "WBC" or "Neutrophils" still maps to its canonical name
+  // ("White Blood Cell Count" / "Neutrophils Absolute") rather than being dropped.
+  const canonByLower = new Map<string, string>();
+  for (const t of canonicalTests) {
+    canonByLower.set(t.name.toLowerCase(), t.name);
+    for (const a of t.aliases ?? []) canonByLower.set(String(a).trim().toLowerCase(), t.name);
+  }
   const resolve = (val: unknown): string | null => {
     if (typeof val !== "string") return null;
     const t = val.trim();

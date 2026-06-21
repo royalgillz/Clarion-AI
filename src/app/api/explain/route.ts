@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { matchTestName, matchTestNamesBatch, generateExplanation } from "@/lib/gemini";
-import { getAllTestNames, getTestByName, getTestsForMatching } from "@/lib/neo4j";
+import { getTestByName, getTestsForMatching } from "@/lib/neo4j";
 import { extractLabCandidates } from "@/lib/extractLabs";
 import { evaluateTriage } from "@/lib/triageRules";
 import { redactSensitiveText } from "@/lib/redact";
@@ -115,11 +115,29 @@ export async function POST(req: NextRequest) {
         matches.set(c.raw_test_name, byCode ?? byName ?? null);
       }
     } else {
-      // Free text: ask Gemini to normalize the raw names in one batch call.
+      // Free text. Match deterministically against canonical names + aliases first
+      // (catches abbreviations like "WBC"/"Hgb" with no LLM call and no chance of being
+      // dropped), then send only the leftovers to Gemini to normalize in one batch call.
       matchSource = "gemini";
-      const canonicalNames = await getAllTestNames();
-      const rawNames = candidates.map((c) => c.raw_test_name);
-      matches = await matchTestNamesBatch(rawNames, canonicalNames);
+      const testRows = await getTestsForMatching();
+      const byNameAlias = new Map<string, string>();
+      for (const t of testRows) {
+        byNameAlias.set(t.name.trim().toLowerCase(), t.name);
+        for (const a of t.aliases) byNameAlias.set(String(a).trim().toLowerCase(), t.name);
+      }
+
+      matches = new Map();
+      const needLLM: string[] = [];
+      for (const c of candidates) {
+        const direct = byNameAlias.get(c.raw_test_name.trim().toLowerCase());
+        if (direct) matches.set(c.raw_test_name, direct);
+        else needLLM.push(c.raw_test_name);
+      }
+
+      if (needLLM.length) {
+        const llmMatches = await matchTestNamesBatch(needLLM, testRows);
+        for (const [raw, canon] of llmMatches) matches.set(raw, canon);
+      }
     }
 
     const normalized = [];
